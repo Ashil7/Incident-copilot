@@ -1,0 +1,24 @@
+"""Public incident response; internal storage paths are intentionally omitted."""
+
+from datetime import datetime
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from app.models import Environment, IncidentStatus
+
+
+class IncidentResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    title: str = Field(min_length=1, max_length=200)
+    service_name: str | None
+    environment: Environment
+    status: IncidentStatus
+    original_filename: str | None
+    statistics: dict[str, Any] | None
+    analysis: dict[str, Any] | None
+    error_message: str | None
+    created_at: datetime
+    completed_at: datetime | None

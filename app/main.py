@@ -6,13 +6,14 @@ from app.config import Settings
 from app.routers.health import router as health_router
 
 
-def create_app() -> FastAPI:
-    """Validate configuration and register the Day 1 routes."""
-    settings = Settings()
+def create_app(settings: Settings | None = None) -> FastAPI:
+    """Validate configuration and register application routes."""
+    settings = settings if settings is not None else Settings()
     application = FastAPI(
-        title="AI Incident & Log Analysis Copilot",
-        description="Day 1: FastAPI foundation and application health.",
+        title=settings.app_name,
+        description="Phase 1, Milestone 1.1: application foundation.",
         version="0.1.0",
+        debug=settings.debug,
     )
     application.state.settings = settings
     application.include_router(health_router)

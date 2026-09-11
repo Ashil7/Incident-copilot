@@ -12,6 +12,11 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 .coverage
+.coverage.*
+coverage.xml
+reports/
+*.pem
+*.key
 htmlcov/
 uploads/*
 !uploads/.gitkeep

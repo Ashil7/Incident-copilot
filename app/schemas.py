@@ -13,6 +13,8 @@ class IncidentResponse(BaseModel):
 
     id: str
     title: str = Field(min_length=1, max_length=200)
+    owner_user_id: str | None
+    severity: str | None
     service_name: str | None
     environment: Environment
     status: IncidentStatus
@@ -32,3 +34,19 @@ class IncidentResponse(BaseModel):
         if value.tzinfo is None:
             return value.replace(tzinfo=timezone.utc)
         return value.astimezone(timezone.utc)
+
+
+class LogFileResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    incident_id: str
+    original_filename: str
+    mime_type: str
+    size_bytes: int
+    sha256: str
+    uploaded_at: datetime
+
+    @field_validator("uploaded_at")
+    @classmethod
+    def normalize_timestamp(cls, value: datetime) -> datetime:
+        return IncidentResponse.normalize_utc_timestamp(value)

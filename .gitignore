@@ -15,6 +15,7 @@ __pycache__/
 .coverage.*
 coverage.xml
 reports/
+backups/
 *.pem
 *.key
 htmlcov/

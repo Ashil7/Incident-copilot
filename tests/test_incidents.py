@@ -10,6 +10,12 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 
+@pytest.fixture(autouse=True)
+def isolate_upload_tests(monkeypatch: pytest.MonkeyPatch, incident_user) -> None:
+    # Pipeline execution has its own integration tests; keep these focused on storage.
+    monkeypatch.setattr("app.routers.incidents.run_analysis", lambda *args: None)
+
+
 def upload(client: TestClient, name: str = "sample.log", body: bytes = b"INFO synthetic\n"):
     return client.post(
         "/api/v1/incidents",
@@ -24,7 +30,7 @@ def stored_files(client: TestClient) -> list[Path]:
 
 def test_create_list_detail_and_safe_filename(client: TestClient) -> None:
     response = upload(client, "../../escape.log")
-    assert response.status_code == 201
+    assert response.status_code == 202
     item = response.json()
     assert item["title"] == "Synthetic incident"
     assert item["status"] == "UPLOADED"
@@ -59,7 +65,7 @@ def test_size_limit_and_partial_cleanup(client: TestClient) -> None:
     client.app.state.settings.max_upload_size_mb = 1
     assert upload(client, body=b"a" * (1024 * 1024 + 1)).status_code == 413
     assert stored_files(client) == []
-    assert upload(client, body=b"a" * (1024 * 1024)).status_code == 201
+    assert upload(client, body=b"a" * (1024 * 1024)).status_code == 202
 
 
 @pytest.mark.parametrize(

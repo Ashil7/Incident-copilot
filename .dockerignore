@@ -1,0 +1,11 @@
+**
+!Dockerfile
+!requirements.txt
+!alembic.ini
+!app/
+!app/**
+!scripts/
+!scripts/**
+**/__pycache__/
+**/*.pyc
+**/.env*

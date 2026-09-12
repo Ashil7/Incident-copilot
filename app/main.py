@@ -4,12 +4,20 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
 from sqlalchemy import Engine
 from sqlalchemy.exc import SQLAlchemyError
+from starlette.exceptions import HTTPException
 
-from app import models  # noqa: F401 -- Register tables in Base.metadata before create_all.
 from app.config import Settings
-from app.database import Base, create_database_engine, create_session_factory
+from app.database import create_database_engine, create_session_factory
+from app.errors import ErrorResponse, http_error_handler, validation_error_handler
+from app.migration_state import verify_schema
+from app.observability import configure_logging
+from app.request_context import RequestContextMiddleware
+from app.routers.admin import router as admin_router
+from app.routers.auth import router as auth_router
+from app.routers.files import router as file_router
 from app.routers.health import router as health_router
 from app.routers.incidents import router as incident_router
 
@@ -22,17 +30,20 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
+        configure_logging()
         engine = database_engine
         try:
             try:
                 if engine is None:
                     engine = create_database_engine(settings)
-                Base.metadata.create_all(engine)
+                with engine.connect() as connection:
+                    verify_schema(connection)
             except SQLAlchemyError:
                 raise RuntimeError(
                     "Database startup failed. Check PostgreSQL availability and configuration."
                 ) from None
             application.state.session_factory = create_session_factory(engine)
+            settings.validate_auth_configuration()
             yield
         finally:
             if engine is not None:
@@ -40,14 +51,26 @@ def create_app(
 
     application = FastAPI(
         title=settings.app_name,
-        description="Phase 1, Milestone 1.3: secure log uploads and incident APIs.",
-        version="0.3.0",
+        description="Milestone 2.5: consistent errors, request correlation, JSON logs, and readiness.",
+        version="0.12.0",
+        responses={
+            status: {"model": ErrorResponse}
+            for status in (400, 401, 403, 404, 405, 409, 413, 422, 429, 500, 503)
+        },
         debug=settings.debug,
         lifespan=lifespan,
     )
     application.state.settings = settings
+
+    application.add_exception_handler(HTTPException, http_error_handler)
+    application.add_exception_handler(RequestValidationError, validation_error_handler)
+    application.add_middleware(RequestContextMiddleware)
+
+    application.include_router(auth_router)
+    application.include_router(admin_router)
     application.include_router(health_router)
     application.include_router(incident_router)
+    application.include_router(file_router)
     return application
 
 

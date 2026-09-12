@@ -17,7 +17,7 @@ from app.models import Incident, IncidentStatus
 from app.schemas import IncidentResponse
 
 
-def test_startup_creates_registered_table(client: TestClient, database_engine: Engine) -> None:
+def test_migrated_table_is_available(client: TestClient, database_engine: Engine) -> None:
     assert inspect(database_engine).has_table("incidents")
 
 
@@ -47,7 +47,7 @@ def test_readiness_success(client: TestClient) -> None:
 
 def test_database_failure_does_not_leak_or_break_liveness(client: TestClient) -> None:
     session = MagicMock(spec=Session)
-    session.execute.side_effect = OperationalError("SELECT 1", {}, Exception("secret-password"))
+    session.connection.side_effect = OperationalError("SELECT 1", {}, Exception("secret-password"))
 
     def unavailable_db() -> Iterator[Session]:
         yield session
@@ -56,7 +56,10 @@ def test_database_failure_does_not_leak_or_break_liveness(client: TestClient) ->
     try:
         response = client.get("/health/ready")
         assert response.status_code == 503
-        assert response.json() == {"detail": "Database unavailable."}
+        assert response.json()["error"]["code"] == "DATABASE_UNAVAILABLE"
+        assert response.json()["error"]["message"] == "Database unavailable."
+        assert response.json()["error"]["request_id"] == response.headers["x-request-id"]
+        assert "secret-password" not in response.text
         assert client.get("/health").status_code == 200
     finally:
         client.app.dependency_overrides.clear()
@@ -88,11 +91,11 @@ def test_missing_database_url_fails_startup(monkeypatch: pytest.MonkeyPatch) -> 
 
 def test_failed_startup_disposes_engine(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(Settings.model_config, "env_file", None)
-    from app.main import Base, create_app
+    from app.main import create_app
 
     engine = MagicMock(spec=Engine)
     failure = OperationalError("synthetic", {}, Exception("private-details"))
-    monkeypatch.setattr(Base.metadata, "create_all", MagicMock(side_effect=failure))
+    monkeypatch.setattr("app.main.verify_schema", MagicMock(side_effect=failure))
     with pytest.raises(RuntimeError, match="Database startup failed") as error:
         with TestClient(create_app(Settings(_env_file=None), database_engine=engine)):
             pass

@@ -24,6 +24,8 @@ TRACE = re.compile(r"\b(?:trace[_-]?id|correlation[_-]?id)\s*[:=]", re.I)
 
 class LogEvent(BaseModel):
     line_number: int
+    source_file_id: str | None = None
+    source_line_number: int | None = None
     timestamp: datetime | None = None
     level: str | None = None
     service: str | None = None

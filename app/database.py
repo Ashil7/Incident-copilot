@@ -14,9 +14,12 @@ class Base(DeclarativeBase):
 
 
 def create_database_engine(settings: Settings) -> Engine:
+    if not settings.database_url.get_secret_value():
+        raise RuntimeError("DATABASE_URL is required to start the database-backed application.")
     return create_engine(
         settings.database_url.get_secret_value(),
         pool_pre_ping=True,
+        pool_timeout=5,
         connect_args={"connect_timeout": 5},
         hide_parameters=True,
     )

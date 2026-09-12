@@ -1,9 +1,9 @@
 """Public incident response; internal storage paths are intentionally omitted."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.models import Environment, IncidentStatus
 
@@ -22,3 +22,13 @@ class IncidentResponse(BaseModel):
     error_message: str | None
     created_at: datetime
     completed_at: datetime | None
+
+    @field_validator("created_at", "completed_at")
+    @classmethod
+    def normalize_utc_timestamp(cls, value: datetime | None) -> datetime | None:
+        """Application timestamps are UTC; SQLite reads lose their timezone metadata."""
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)

@@ -10,7 +10,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 class Settings(BaseSettings):
-    """Foundation settings; external services are unused in Milestone 1.1."""
+    """Typed settings; database configuration is checked when the app starts."""
 
     model_config = SettingsConfigDict(
         env_file=PROJECT_ROOT / ".env",
@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     openai_model: str = ""
     upload_directory: Path = Path("uploads")
     max_upload_size_mb: int = Field(default=5, gt=0)
+    max_evidence_items: int = Field(default=30, ge=1, le=100)
 
     @field_validator("database_url")
     @classmethod

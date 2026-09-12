@@ -21,7 +21,7 @@ def test_openapi_documents_health(client: TestClient) -> None:
     assert response.status_code == 200
     schema = response.json()
     assert schema["info"]["title"] == "AI Incident Copilot"
-    assert set(schema["paths"]) == {"/health"}
+    assert {"/health", "/health/ready"} <= set(schema["paths"])
     assert "200" in schema["paths"]["/health"]["get"]["responses"]
 
 

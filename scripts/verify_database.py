@@ -17,7 +17,7 @@ def main() -> None:
         with create_session_factory(engine)() as session:
             assert session.scalar(text("SELECT 1")) == 1
             incident = Incident(
-                title="Synthetic Day 2 verification",
+                title="Synthetic Milestone 1.2 verification",
                 stored_file_path="uploads/synthetic-internal-path.log",
                 statistics={"error_count": 2},
             )

@@ -12,7 +12,7 @@ pythonpath = ["."]
 addopts = "-ra"
 
 [tool.coverage.run]
-source = ["app.main", "app.config", "app.routers.health"]
+source = ["app.main", "app.config", "app.database", "app.models", "app.routers.health", "app.services.redactor", "app.services.log_parser"]
 
 [tool.coverage.report]
 show_missing = true

@@ -1,52 +1,298 @@
 # AI Incident & Log Analysis Copilot
 
-## Current checkpoint: Phase 1, Milestone 1.1
+Current checkpoint: **Phase 1, Milestone 1.5 - statistics and evidence: verified**.
 
-The project is following the new end-to-end milestone plan. Milestone 1.1 provides
-the FastAPI application, typed settings, `/health`, Swagger/OpenAPI, Ruff
-configuration, and a Pytest test skeleton with working foundation tests.
-Verified in WSL on Python 3.12.3: Ruff formatting reported 13 files unchanged,
-Ruff lint passed, and `pytest -v` reported 12 passed with two dependency deprecation
-warnings (Starlette's HTTPX integration and AnyIO's BlockingPortal alias).
-Live Uvicorn/browser verification for this milestone remains pending.
+Verified in WSL: Ruff formatting and lint passed; Pytest reported **80 passed,
+2 dependency warnings**. The synthetic preview confirmed 6 errors, 1 warning,
+HTTP error rate 0.625, average latency 1220.25 ms, p50 612.5 ms, and seven redacted
+evidence items (E1-E7). Duration tokens normalize to `<duration>` in signatures
+while measured latencies remain unchanged. Small decimal tails in interpolated
+percentiles are floating-point representation, not additional measurement precision.
+Milestone 1.6 has not started.
 
-Python extracts and measures facts; the planned LLM explains evidence and proposes
-investigation steps. A human confirms the cause and resolution. Use synthetic data.
+Milestone 1.5 adds `app/services/error_signatures.py`, `statistics.py`,
+`evidence_selector.py`, their tests, and `scripts/preview_statistics.py`.
+Settings now support `MAX_EVIDENCE_ITEMS` (default 30, range 1-100); `.env` is
+not modified. No new dependencies, API routes, table changes, LLM calls, or jobs
+are introduced. Statistics/evidence persistence and upload pipeline integration
+remain Milestone 1.6 work.
 
-| Capability | Current state |
+### Deterministic calculation rules
+
+- Each ERROR/CRITICAL/FATAL or HTTP status >=400 event counts once as an error.
+  Warnings count independently by WARN/WARNING level.
+- HTTP error rate is HTTP-error observations divided by observations with a known
+  HTTP status. It is null without a denominator. Repeated log lines may describe
+  the same request, so this is not claimed to be a unique-request error rate.
+- Top five endpoints/services count error events only, with alphabetical tie breaks.
+  Endpoint query strings remain redacted but are not otherwise canonicalized.
+- Latencies include finite nonnegative observations. Empty summaries are null;
+  min, max, average, p50, p90, p95, and p99 are calculated in Python.
+- Percentiles use linear interpolation: sort values, calculate index
+  `(n - 1) * p / 100`, and interpolate between its neighboring values. For
+  `[0, 10, 20, 30]`, p95 is 28.5. A single-value percentile is that value.
+- Error signatures normalize timestamps, UUIDs, duration tokens, and variable numbers in redacted
+  messages. Level and HTTP status remain explicit grouping keys. Similar signatures
+  are a heuristic, not proof of a shared cause. Enrichment returns event copies.
+- Time summaries use offset-aware timestamps converted to UTC. Naive or missing
+  timestamps are excluded and counted, never assigned an invented offset. Error
+  buckets use one-minute intervals. The compact timeline marks first/last timed
+  errors and the peak minute; it does not invent an incident end or recovery time.
+- Redacted trace placeholders are counted, not treated as correlatable IDs. The
+  current parser redacts trace IDs, so useful trace correlation is not available yet.
+
+### Evidence rules and limits
+
+Evidence candidates are errors, warnings, or observations with latency >=1000 ms.
+Distinct signatures are prioritized by severity and then source line number.
+Remaining capacity includes first/last error, highest latency, events next to the
+initial failure, and the first successful HTTP observation after the last error.
+That successful observation is explicitly not confirmed recovery. Each signature
+can contribute its first, last, and slowest instances, plus adjacent context;
+repeated messages do not fill the budget. Small budgets may omit context or later
+signatures. Selection is deterministic, not a guarantee that every cause is represented.
+
+Final evidence is ordered by source line and assigned E1, E2, etc. Each item contains
+`evidence_id`, the normalized redacted `event`, and selection `reasons`. IDs are
+stable for the same input/configuration, not across changed logs or limits. The
+selector currently handles one source file and rejects duplicate line numbers.
+It expects already-redacted parser output and performs no persistence or network I/O.
+
+After formatting, linting, and tests, preview with:
+
+```bash
+python -m scripts.preview_statistics tests/fixtures/synthetic_logs.txt
+```
+
+Expected fixture checks: 14 lines, 13 events, 6 errors, 1 warning, 8 HTTP observations,
+HTTP error rate 0.625, average latency 1220.25 ms, p50 612.5 ms, and maximum 5000 ms.
+The preview prints statistics and capped redacted evidence, not raw input or settings.
+Use `--max-evidence 5` to override the configured cap for a preview.
+
+No new FastAPI concepts are introduced: these are ordinary Python calculations
+and Pydantic output models. A Counter tallies repeated values, sorting fixes tie
+order, and interpolation estimates a percentile between two observed values.
+Tests remain offline. Verification is complete; run one guided command at a time.
+
+Suggested commit: `feat: add deterministic incident statistics and evidence selection`.
+
+Milestone 1.5 interview questions:
+
+1. Why calculate statistics without an LLM? Python calculations are repeatable and testable.
+2. Why null for an unknown error rate? Zero would wrongly imply measured absence of errors.
+3. What does p95 mean here? A value at the 95% position under the documented interpolation rule.
+4. Why diversify evidence? Repeated copies can hide distinct failures within a limited budget.
+5. Why exclude naive timestamps from UTC buckets? Their offset is unknown, so mixing them
+   would imply an ordering and absolute times the logs do not establish.
+
+### Milestone 1.4 verification
+
+Verified in WSL: Ruff formatting and lint passed; Pytest reported **60 passed,
+2 dependency warnings**. The synthetic preview produced 14 total lines: 11 parsed,
+0 partial, 1 blank, and 2 unparsed. Known fixture secrets were masked in messages
+and extracted fields; seconds converted to milliseconds; original source line
+numbers and missing values were preserved. The instruction-like line remained
+ordinary log text. Milestone 1.5 implementation is described above.
+
+Milestone 1.4 adds standalone `app/services/redactor.py` and `log_parser.py`,
+`tests/test_redactor.py`, `tests/test_parser.py`, a synthetic fixture at
+`tests/fixtures/synthetic_logs.txt`, and `scripts/preview_logs.py`. No new dependencies,
+database tables, upload behavior, or API routes are introduced. Uploaded incidents
+still remain UPLOADED; pipeline integration comes in Milestone 1.6.
+
+### Redaction and parser contract
+
+The parser redacts messages and extracted text fields before returning normalized
+events. JSON objects are decoded in memory, recursively redacted, and only then
+used to build events; raw decoded JSON is never returned or persisted. Text input
+is redacted before field extraction. The functions make no database or provider calls.
+
+Masking covers bearer/basic credentials; password, token, API key, secret, session,
+cookie, trace/correlation ID assignments; email addresses; 12-19 digit account-like
+numbers; common North American phone-like formats with optional country prefixes;
+and sensitive query-string assignments. JSON secret values are masked regardless
+of value type. IPv4 masking is optional via `mask_ipv4=True` or the preview flag.
+Regex rules are deliberately conservative: cookie masking can discard the rest of
+a text line. Unknown secret keys, unusual encodings, international phone formats,
+and malformed/obfuscated input can evade redaction. This is not a privacy guarantee.
+Existing raw synthetic upload files are not rewritten by these standalone services.
+
+Each event contains line_number, timestamp, level, service, method, endpoint,
+status_code, latency_ms, redacted trace_id, message, error_signature, and parse_status.
+Missing/invalid fields are null. The parser leaves error signatures null;
+Milestone 1.5 enriches copies of error events with normalized signatures.
+Plain text supports ISO timestamps, common levels, METHOD /path followed by status,
+explicit status/status_code assignments, and durations in ms or seconds. Timestamp
+offsets are preserved; absent offsets stay absent. WARN normalizes to WARNING and
+FATAL to CRITICAL. JSON aliases include time/timestamp, severity/level, path/endpoint,
+http_method/method, status/status_code, duration_ms/latency_ms, and msg/message.
+JSON durations are interpreted only in explicitly millisecond-named fields.
+
+Line accounting is explicit: parsed means a timestamp and level were recognized;
+partial means some fields were recognized without both; unparsed means none were
+recognized (including malformed JSON); whitespace-only lines count as blank and
+do not create events. Original 1-based line numbers are preserved, including gaps.
+These counts describe parsing quality, not incident statistics. JSON-looking broken
+lines stay unparsed instead of being reinterpreted as plain text. A tuple of parser
+functions is the registry: each returns an event or None to try the next parser.
+Custom parsers must preserve the same redaction and validation contract.
+
+Pydantic models define the normalized output, like DRF serializers. Regular
+expressions recognize supported patterns, not arbitrary language. The incremental
+input loop reads lines, but the returned event list is kept in memory; this is a
+learning-stage parser, not a large-file streaming analysis pipeline. No new FastAPI
+concepts are required in this milestone: these services are ordinary Python functions.
+
+Verification is complete for this milestone. In the guided session, run one requested command and
+share its output before continuing. Existing Ruff and Pytest commands below include
+the new modules. After tests pass, preview the synthetic fixture:
+
+```bash
+python -m scripts.preview_logs tests/fixtures/synthetic_logs.txt --redact-ipv4
+```
+
+Expected: normalized JSON with redacted messages, preserved source line numbers,
+and parsing-quality counts. The injection-style message remains plain text; nothing
+in log contents is executed or treated as instructions. Do not preview real private logs.
+
+Suggested commit: `feat: add standalone log redaction and parsing with synthetic tests`.
+
+Milestone 1.4 interview questions:
+
+1. Why redact extracted fields too? An endpoint or service field can contain the same
+   sensitive data as a message; masking only the message is insufficient.
+2. Why null for missing fields? Invented values make later statistics misleading.
+3. Why preserve line numbers? They let a human trace an observation to source evidence.
+4. Why handle malformed lines independently? One broken record should not discard
+   the rest of an otherwise useful log file.
+5. Why use a parser registry? Additional explicit formats can be added without
+   changing the input loop or normalized event contract.
+
+### Milestone 1.3 verification
+
+Verified in WSL on Python 3.12.3: Ruff formatting and lint passed; Pytest reported
+**33 passed, 2 dependency deprecation warnings**. Live checks against PostgreSQL
+confirmed upload creation (201), detail retrieval (200) with the same UTC timestamp,
+listing (200), and unsupported-extension rejection (422). Internal paths were
+absent from the create/detail responses. Empty files, size boundaries, invalid
+metadata/text, rollback cleanup, pagination, and missing IDs were covered by the
+automated suite. Milestone 1.4 implementation is described above.
+
+Milestone 1.3 adds `app/routers/incidents.py`, `app/services/uploads.py`, and
+`tests/test_incidents.py`. The existing table and response schema are reused.
+Install the updated dependencies before restarting Uvicorn:
+
+```bash
+python -m pip install -r requirements-dev.txt
+```
+
+New endpoints:
+
+| Endpoint | Behavior |
 | --- | --- |
-| Settings, health, Swagger | Verified through in-process tests; live browser check pending |
-| Ruff and foundation tests | Ruff passed; 12 tests passed in WSL |
-| Earlier database implementation | Preserved, disconnected from the default app |
-| Uploads, parsing, statistics, LLM analysis | Planned for subsequent milestones |
-| Auth, workers, RAG, dashboard, deployment | Planned for later phases |
+| `POST /api/v1/incidents` | Multipart upload and incident metadata; returns 201, status UPLOADED |
+| `GET /api/v1/incidents` | Newest first; limit defaults to 20, maximum 100; offset defaults to 0 |
+| `GET /api/v1/incidents/{incident_id}` | Detail, 404 for an unknown UUID, 422 for malformed UUID |
 
-### Current files
+POST fields: required `title` (1-200 characters, not whitespace-only), optional
+`service_name` (maximum 200), `environment` (DEV/UAT/PROD; default DEV), and required
+`log_file`. Supported files are .log/.txt with text/plain or application/octet-stream
+MIME type. Bytes must be valid UTF-8 without NUL bytes; the MIME header alone is
+not trusted. Empty files return 422 and files exceeding MAX_UPLOAD_SIZE_MB return 413.
+One MB means 1,048,576 bytes. Relative UPLOAD_DIRECTORY paths resolve from the project
+root. Filenames are generated UUIDs; original filenames are display-only metadata.
+Internal storage paths are omitted from create, list, and detail responses.
+Application-created timestamps are serialized consistently in UTC. The response
+schema restores UTC metadata when the SQLite test database returns naive timestamps;
+timezone-aware database values are converted to UTC.
 
-- `app/main.py`: application construction; no database startup.
-- `app/config.py`: typed environment settings.
-- `app/routers/health.py`: health route and Pydantic response.
-- `app/legacy_main.py`: preserved earlier database application entry point.
-- `requirements.txt`: application dependencies, including earlier database packages.
-- `requirements-dev.txt`: application dependencies plus Ruff, Pytest, coverage, HTTPX.
-- `pyproject.toml`: Ruff, Pytest, and foundation coverage configuration.
-- `tests/conftest.py`: isolated settings and reusable test client.
-- `tests/test_health.py`, `tests/test_config.py`: foundation verification.
+FastAPI **Form** reads multipart text fields, like form fields in Django requests.
+**UploadFile** gives a spooled temporary file rather than a single bytes value.
+The synchronous handler copies it in 64 KiB chunks, closes it in finally, and removes
+partial files on validation/write failure. Database failures trigger rollback and
+saved-file cleanup. **Query** validates pagination and the typed UUID path parameter
+validates incident IDs. **201 Created** means a row and file were saved; analysis is
+not scheduled yet, so this endpoint does not claim 202 Accepted/background processing.
 
-The database models, Compose file, and database verification script remain intact.
-They are not part of Milestone 1.1 verification. The original database startup
-can be accessed through `app.legacy_main:app` when returning to that work.
+Manual verification, after dependency installation and startup: open `/docs`, create
+an incident using a small synthetic .log/.txt file, then use the returned ID in GET
+detail. List should contain it. Invalid extension/empty upload should return 422.
+The guided session supplies one command at a time; wait for each result before continuing.
 
-### WSL setup and verification
+Limitations: the framework parses/spools multipart data before the handler runs;
+this file-copy limit is not a total HTTP request-body or temporary-disk quota.
+Authentication, malware scanning, redaction, parsing, analysis, and crash recovery
+are not implemented yet. Raw synthetic uploads are stored locally and are not served
+as static files. A process crash between file storage and database commit can leave
+an orphan file; filesystem and database writes are not one atomic transaction.
+Use synthetic data only. Do not expose this unauthenticated learning API publicly.
 
-Confirmed environment: Python 3.12.3, project `/mnt/d/python/incident-copilot`,
-interpreter `.venv-wsl/bin/python3`. Use a Linux virtual environment in WSL;
-Windows `Scripts/python.exe` environments cannot be reused as Linux environments.
-For a fresh environment, create it with `python3.12 -m venv .venv-wsl`, then
-activate it with `source .venv-wsl/bin/activate`. The user's environment is already active.
+Suggested Milestone 1.3 commit: `feat: add secure log upload and incident retrieval APIs`.
 
-These commands are a reference. In the guided session, run only the single command
-requested by the assistant, share its output, and wait before proceeding.
+Milestone 1.3 interview questions:
+
+1. Why multipart? It carries file bytes and ordinary form fields together.
+2. Why generated filenames? User-provided paths never control where files are stored.
+3. Why chunked copying? It bounds application copy-buffer memory and counts actual bytes.
+4. Why rollback and unlink? They clean up the two storage systems when creation fails.
+5. Why bounded pagination? It prevents a list request from returning every stored incident.
+
+Reference: [FastAPI forms and files](https://fastapi.tiangolo.com/tutorial/request-forms-and-files/).
+
+## Previous checkpoint verification
+Milestone 1.1 was verified by the user. Milestone 1.2 offline checks passed in WSL
+on Python 3.12.3: Ruff formatting and lint passed; Pytest reported **20 passed,
+2 dependency deprecation warnings**. The user also verified real PostgreSQL through
+localhost:5433: `/health/ready` returned HTTP 200 with `{"status":"ok"}`, and
+`scripts.verify_database` passed connectivity, table presence, UUIDs, defaults,
+timezone handling, JSON storage, response privacy, and rollback. Milestone 1.2 is
+complete. Milestone 1.3 verification results are recorded above.
+
+This application will help investigate synthetic application logs. Python extracts,
+redacts, validates, and measures facts; the LLM will explain evidence and suggest
+investigation steps. A human confirms root causes and resolutions.
+
+## Implemented scope
+
+- FastAPI application, typed settings, Swagger and OpenAPI.
+- GET `/health`: application liveness, returning `{"status":"ok"}`.
+- GET `/health/ready`: executes `SELECT 1`; returns 200 when available, or 503
+  with `{"detail":"Database unavailable."}` after a database failure.
+- Synchronous SQLAlchemy 2.x engine, session factory, Base, and `get_db` dependency.
+- Initial Incident ORM model and public response schema excluding internal paths.
+- Learning-stage table creation during application startup.
+- Ruff formatting/linting and offline Pytest checks.
+
+Upload/create/list/detail routes are implemented and verified in Milestone 1.3.
+Authentication, migrations, workers, RAG, dashboard, and deployment remain planned.
+
+## Repository responsibilities
+
+| File | Responsibility |
+| --- | --- |
+| `app/main.py` | App assembly, model registration, startup and shutdown |
+| `app/config.py` | Typed configuration from environment and optional .env |
+| `app/database.py` | Declarative Base, engine, sessionmaker, request dependency |
+| `app/models.py` | Initial Incident model and environment/status enums |
+| `app/schemas.py` | Public incident response schema |
+| `app/routers/health.py` | Liveness and database readiness |
+| `app/legacy_main.py` | Compatibility import of the main app; no duplicate startup |
+| `docker-compose.yml` | PostgreSQL service, health check, persistent volume |
+| `tests/` | Settings, API, lifecycle, transaction, and readiness checks |
+| `scripts/verify_database.py` | Opt-in real PostgreSQL round-trip check |
+| `pyproject.toml` | Ruff, Pytest, coverage configuration |
+
+The earlier database implementation was reused without changing its table layout.
+`app.main` explicitly imports models with a documented `noqa: F401` because the
+import registers tables in `Base.metadata`. Removing it can leave metadata empty.
+The old `app.legacy_main:app` command resolves to the same current app.
+
+## WSL setup
+
+Use Python 3.12 with `.venv-wsl` activated. The verified WSL interpreter is Python
+3.12.3. Run FastAPI directly in WSL and PostgreSQL through Docker Compose.
+For a fresh environment, run `python3.12 -m venv .venv-wsl`, then
+`source .venv-wsl/bin/activate`. Do not reuse a Windows virtual environment in WSL.
 
 Install dependencies:
 
@@ -54,374 +300,166 @@ Install dependencies:
 python -m pip install -r requirements-dev.txt
 ```
 
-Format source files (formatting only):
+Preserve your existing `.env` credentials. A fresh clone can copy `.env.example`
+to `.env` and fill in its own credentials. This milestone does not overwrite `.env`.
+
+| Variable | Configuration |
+| --- | --- |
+| `APP_NAME` | Defaults to AI Incident Copilot |
+| `APP_ENV` | development, test, or production; currently a label |
+| `DEBUG` | Defaults to false; keep false outside local development |
+| `DATABASE_URL` | Required at startup; postgresql+psycopg URL using localhost:5433 |
+| `POSTGRES_PORT` | 5433 on the Windows/WSL host |
+| `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | Your existing Compose credentials |
+| `OPENAI_API_KEY`, `OPENAI_MODEL` | Unused in this milestone |
+| `UPLOAD_DIRECTORY`, `MAX_UPLOAD_SIZE_MB` | Reserved upload settings |
+
+URL shape (placeholders only):
+`postgresql+psycopg://YOUR_USER:YOUR_URL_ENCODED_PASSWORD@localhost:5433/YOUR_DATABASE`.
+The container still listens on **5432**. Compose publishes
+`127.0.0.1:${POSTGRES_PORT:-5433}:5432`. An explicit `POSTGRES_PORT` in `.env`
+overrides this default; keep it consistent with DATABASE_URL. A future API running
+inside Compose would connect to `db:5432`, not localhost.
+
+Settings load the project-root `.env`; environment variables override file values.
+Secrets use masked representations, not encryption. Never share or commit `.env`.
+
+In the guided session, run one requested command and share its output before the next.
+The following commands are a reference, not a request to run them all at once.
+
+Start PostgreSQL:
+
+```bash
+docker compose up -d --wait db
+```
+
+Expect `db` to become healthy. Start FastAPI:
+
+```bash
+python -m uvicorn app.main:app --reload
+```
+
+Expect `Application startup complete` on port 8000. Startup now requires a usable
+PostgreSQL connection. Missing configuration or database failures stop startup.
+No connection or table creation occurs merely by importing app.main.
+
+In another WSL terminal:
+
+```bash
+curl -i http://127.0.0.1:8000/health/ready
+```
+
+Expect HTTP 200 and `{"status":"ok"}`. `/health` retains the same successful
+response from Milestone 1.1. Open http://localhost:8000/docs to try both routes.
+Swagger is an interactive client generated from `/openapi.json`; its browser
+assets need CDN access.
+
+With the API started and the WSL environment active, verify real PostgreSQL:
+
+```bash
+python -m scripts.verify_database
+```
+
+Expect PASS for connectivity, table presence, UUID, defaults, timezone-aware
+PostgreSQL timestamps, JSON, response privacy, and rollback. It inserts a synthetic
+row inside a transaction and rolls back, leaving no test row. Run this explicitly;
+it is not part of the offline default tests. Restarting the API creates only missing
+tables and preserves existing data.
+
+## Tests and quality checks
 
 ```bash
 python -m ruff format app tests scripts
 ```
 
-Check formatting:
-
-```bash
-python -m ruff format --check app tests scripts
-```
-
-Lint for common errors and import ordering:
-
 ```bash
 python -m ruff check app tests scripts
 ```
 
-Run tests with foundation coverage:
-
 ```bash
-python -m pytest --cov --cov-report=term-missing
+python -m pytest -v
 ```
 
-Expected: formatting and lint checks succeed, and all tests pass. Tests use an
-in-process HTTPX/TestClient transport and synthetic settings; no PostgreSQL,
-Docker, LLM credentials, API credits, or live network access is required.
-Coverage currently measures only the Milestone 1.1 application modules.
+Optional coverage: `python -m pytest --cov --cov-report=term-missing`.
+The default suite uses isolated in-memory SQLite and mocked failures, never your
+.env or PostgreSQL credentials. It checks startup, table registration, commit,
+refresh, rollback, session cleanup, readiness, response privacy, and existing
+foundation behavior. SQLite tests do not prove PostgreSQL enum, timezone, or
+connection behavior; the explicit PostgreSQL verification fills that gap.
 
-Start the application:
+## Concepts explained
 
-```bash
-python -m uvicorn app.main:app --reload
-```
-
-Expected: `Application startup complete` at `http://127.0.0.1:8000`.
-`app.main:app` means import the `app.main` module and serve its `app` object.
-`--reload` restarts the development server when source files change. Stop with Ctrl+C.
-
-Manual check in another WSL terminal:
-
-```bash
-curl -i http://127.0.0.1:8000/health
-```
-
-Expect HTTP 200 with `{"status":"ok"}`. Open `http://localhost:8000/docs`,
-expand **GET /health**, choose **Try it out**, then **Execute**. Expect the same
-result. Swagger's browser assets load from a CDN; rendering the interactive UI
-needs internet access. `/openapi.json` is generated locally.
-
-### Settings and beginner concepts
-
-| Setting | Default | Purpose |
-| --- | --- | --- |
-| `APP_NAME` | `AI Incident Copilot` | Application title in Swagger |
-| `APP_ENV` | `development` | Validated label: development, test, or production |
-| `DEBUG` | `false` | FastAPI debugging flag; leave false outside local development |
-| `DATABASE_URL` | blank | Preserved legacy setting; unused by the current app |
-| `OPENAI_API_KEY`, `OPENAI_MODEL` | blank | Preserved future integration settings |
-| `UPLOAD_DIRECTORY`, `MAX_UPLOAD_SIZE_MB` | uploads, 5 | Preserved future upload settings |
-
-`.env` is optional for this milestone. Preserve an existing file; on a fresh clone
-you may copy `.env.example` to `.env`. Environment variables override file values.
-`APP_ENV` is currently just a label, not a complete production-security configuration.
-Never commit `.env`, uploaded files, private keys, or virtual environments.
-
-**FastAPI** is the web application framework. **Uvicorn** is the ASGI server that
-accepts browser/HTTP requests and passes them to the app. **APIRouter** groups URL
-handlers, similar to Django URL patterns. `@router.get("/health")` connects a GET
-request to the `health` function; `include_router` registers that group.
-
-**Pydantic** describes and validates data, comparable to a small DRF serializer.
-`HealthResponse` defines the JSON response contract. **Pydantic Settings** reads
-environment values and validates Python types, similar to typed Django settings.
-`SecretStr` masks representations; it is not encryption. Settings are never
-returned by `/health`.
-
-**Swagger UI** is an interactive client built from FastAPI's **OpenAPI** schema,
-which describes the API for tools. A normal `def` endpoint is suitable here;
-FastAPI runs synchronous endpoint functions in a thread pool. You do not need
-`async def` for every endpoint.
-
-**Pytest fixtures** supply reusable setup such as a test client. **TestClient**
-exercises requests in process without a listening server. **Ruff linting** finds
-common code errors; **Ruff formatting** makes whitespace and layout consistent.
+- **Engine:** SQLAlchemy's connection manager and pool. Reuse one for the app;
+  do not create a new pool for every request. Psycopg is its PostgreSQL driver.
+- **sessionmaker:** a configured factory that creates individual sessions.
+- **Session:** tracks ORM objects and changes within a transaction. It is not a
+  global shared database connection and must not be shared across requests.
+- **Base:** the parent for ORM models; collects the table definitions in metadata.
+- **ORM model:** a Python class mapped to a database table, similar to a Django
+  model. Incident retains UUID strings, environment/status enums, JSON results,
+  optional file metadata, and UTC timestamps. File paths are private.
+- **get_db dependency:** FastAPI calls it for `Depends(get_db)`, supplies the yielded
+  session to the route, and closes the session after success or failure. Closing
+  releases resources and rolls back uncommitted work. It does not auto-commit.
+- **commit():** flushes pending SQL and makes the transaction durable. Unlike the
+  common Django autocommit workflow, changes here need an explicit commit.
+- **refresh():** reads a row again into an ORM object, useful for values/defaults
+  stored by the database. `flush()` sends SQL without making the transaction durable.
+- **rollback():** discards uncommitted transaction changes and makes a session usable
+  again after a failed transaction; it cannot undo an already committed transaction.
+- **Lifespan:** code before `yield` prepares the app; code after it releases resources.
+  Startup uses `Base.metadata.create_all`; shutdown disposes the engine, even after
+  a startup failure. Synchronous startup work happens before serving requests.
+- **Synchronous route:** FastAPI runs a normal `def` handler in a thread pool, suitable
+  for synchronous ORM calls. Readiness therefore uses `def`, not blocking SQL in an
+  `async def` handler.
+- **Pydantic schema:** describes the public API data, like a DRF serializer; it is
+  separate from the database table model.
 
 ```mermaid
 flowchart LR
-    Client --> Uvicorn --> FastAPI --> HealthRouter
-    HealthRouter --> JSON["200: status ok"]
-    Config["Environment / optional .env"] --> Settings --> FastAPI
+    WSL[FastAPI in WSL] --> Engine[SQLAlchemy pool]
+    Engine --> Host[localhost:5433]
+    Host --> DB[PostgreSQL container:5432]
+    Startup[App startup] --> Tables[Create missing registered tables]
+    Tables --> DB
 ```
 
-### Milestone boundaries and interview practice
+## Limitations and checkpoint
 
-The current health endpoint reports liveness, not dependency readiness. No database
-tables are created by `app.main`. Authentication, production hardening, migrations,
-workers, upload APIs, and AI features are not implemented in this milestone.
-Stop after verification; Milestone 1.2 requires an explicit request.
+`create_all` creates missing tables, not migrations. It does not alter existing
+columns, enums, or constraints; schema changes need Alembic in a later phase.
+PostgreSQL initialization credentials only apply to an empty volume; changing
+.env does not change an existing database password. Named volumes persist data.
+During local verification, the stored role password needed to be synchronized with
+the existing configured password using psql's interactive `\password` command.
+No `.env` credentials or database volume were replaced. Container loopback rules
+used `trust`, so a successful loopback `SELECT 1` did not validate the password;
+connections from WSL required SCRAM authentication. A healthy container alone is
+therefore not proof that the application's database credentials work. Do not
+weaken authentication rules to resolve a password mismatch.
+`docker compose stop db` retains data. Do not remove volumes to fix credentials.
 
-Suggested commit: `feat: establish milestone 1.1 foundation with Ruff and tests`
+Readiness checks current database connectivity; it is not a migration audit. Liveness
+can remain 200 after a running database becomes unavailable, but initial startup
+requires the database. No production readiness, authentication, or upload behavior
+is claimed. Dependency deprecation warnings from Starlette/AnyIO were seen in the
+previous checkpoint and are not suppressed.
 
-1. **What does Uvicorn do?** It accepts HTTP requests and runs the FastAPI ASGI app.
-2. **What is an APIRouter?** A group of endpoint handlers registered on the application.
-3. **How is Pydantic like a DRF serializer?** Both describe and validate data contracts.
-4. **Why use environment settings?** Configuration varies between environments without
-   hardcoding credentials; typed settings reject invalid values early.
-5. **Why use TestClient?** It tests the real application routing and responses in process,
-   without starting a server or contacting external services.
-
-References: [FastAPI testing](https://fastapi.tiangolo.com/tutorial/testing/),
-[Ruff configuration](https://docs.astral.sh/ruff/configuration/), and
-[Pydantic Settings](https://docs.pydantic.dev/latest/concepts/pydantic_settings/).
-
----
-
-## Historical Day 2 notes (preserved, not current setup instructions)
-
-The section below records the previous plan and its previous verification results.
-Its database startup commands refer to `app.legacy_main:app` now, rather than
-`app.main:app`. Follow the Milestone 1.1 instructions above for the current work.
-
-Days 1–2 implement the FastAPI foundation and PostgreSQL persistence. The planned application helps investigate
-synthetic application logs: **Python detects and calculates facts; the LLM explains
-those facts and suggests investigation steps.** Upload APIs and analysis are still
-scheduled for later days. Compose currently runs PostgreSQL only.
-
-What was added:
-
-- `app/main.py`: FastAPI application assembly.
-- `app/routers/health.py`: typed `/health` endpoint.
-- `app/config.py`: `pydantic-settings` configuration for environment variables.
-- `requirements.txt`, `.env.example`, and `.gitignore`.
-- `app/database.py`: engine, session factory, declarative base, and `get_db`.
-- `app/models.py`: Incident table and environment/status enums.
-- `app/schemas.py`: public incident response without internal file paths.
-- `docker-compose.yml`: PostgreSQL 16, readiness check, and persistent volume.
-- `scripts/verify_database.py`: synthetic database round-trip verification.
-
-Quick start (from project root):
-
-1. Create and activate a virtual environment (example using venv):
-
-```powershell
-py -3.12 -m venv .venv
-.venv\Scripts\Activate.ps1
-```
-
-2. Install dependencies:
-
-```bash
-python -m pip install -r requirements.txt
-cp .env.example .env  # fresh clone only; preserve an existing .env
-```
-
-3. Configure `.env`: set `POSTGRES_PASSWORD` and a matching `DATABASE_URL`, for
-example `postgresql+psycopg://incident_user:YOUR_PASSWORD@localhost:5432/incident_db`.
-Replace the placeholder; URL-encode special characters in the URL password.
-The existing workspace `.env` was configured with a generated local password.
-Start Docker Desktop, then start PostgreSQL:
-
-```bash
-docker compose up -d --wait db
-docker compose ps
-```
-
-Expect the `db` service to be healthy. Run the app with Uvicorn:
-
-```bash
-python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
-```
-
-4. Verify health:
-
-```bash
-curl -sS http://127.0.0.1:8000/health
-# expected: {"status":"ok"}
-```
-
-Swagger UI is available at `http://127.0.0.1:8000/docs`.
-
-If PowerShell blocks activation, use `.venv\Scripts\python.exe` instead of
-`python` in the run command. In this workspace, Day 2 uses a clean `.venv-312`
-because the existing `.venv` had mismatched Python versions. Use
-`.venv-312\Scripts\python.exe` for the commands below, or activate
-`.venv-312\Scripts\Activate.ps1`. Local PostgreSQL uses port 55432 in `.env`
-because Windows rejected the original 5432 binding.
-For a fresh clone, install Python 3.12 first. A uv-created environment may not
-include pip; use `python -m ensurepip` before installing dependencies in that case.
-
-For WSL, create a separate Linux environment (do not reuse the Windows `.venv`):
-
-```bash
-python3.12 -m venv .venv-wsl
-source .venv-wsl/bin/activate
-python -m pip install -r requirements.txt
-cp .env.example .env  # only if .env does not already exist
-# Set POSTGRES_PASSWORD and DATABASE_URL as described above.
-docker compose up -d --wait db
-python -m uvicorn app.main:app --reload
-```
-
-Expected startup: Uvicorn reports `Application startup complete` and listens on
-port 8000. Stop with Ctrl+C. Reload is for local development.
-
-## Configuration
-
-Settings read the project-root `.env` regardless of the working directory.
-Environment variables override `.env`; restart after editing configuration.
-Never commit `.env`. PostgreSQL is required at startup; LLM settings remain unused.
-
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `DATABASE_URL` | required | PostgreSQL URL using `postgresql+psycopg://` |
-| `POSTGRES_USER` | example: `incident_user` | Compose database user |
-| `POSTGRES_PASSWORD` | required | Compose database password |
-| `POSTGRES_DB` | example: `incident_db` | Compose database name |
-| `POSTGRES_PORT` | `5432` | Local published port; match this in `DATABASE_URL` |
-| `OPENAI_API_KEY` | blank | Secret API key, needed when LLM analysis is added |
-| `OPENAI_MODEL` | blank | Explicit model selection when LLM analysis is added |
-| `UPLOAD_DIRECTORY` | `uploads` | Future upload location, relative to working directory |
-| `MAX_UPLOAD_SIZE_MB` | `5` | Positive integer for the future upload limit |
-
-No model credentials are needed today. Secrets use `SecretStr` to
-mask their representation; this is not encryption. Settings are never returned
-by the health endpoint. A nonpositive or noninteger upload limit fails startup.
-
-## Day 1 structure and concepts
-
-```text
-app/
-  __init__.py
-  main.py
-  config.py
-  database.py
-  models.py
-  schemas.py
-  routers/
-    __init__.py
-    health.py
-  services/__init__.py
-tests/.gitkeep
-uploads/.gitkeep
-.env.example
-.gitignore
-.python-version
-requirements.txt
-docker-compose.yml
-scripts/verify_database.py
-README.md
-```
-
-`FastAPI` is the application object. `APIRouter` groups related endpoints, much
-like a Django app's `urls.py`. The `@router.get` decorator connects an HTTP method
-and URL to a Python function, combining URL registration with the view definition.
-`include_router` registers that group with the application.
-
-Pydantic's `HealthResponse` describes and validates the response, similar to a
-small DRF serializer. `BaseSettings` validates configuration from external values,
-adding typed validation to the role served by Django settings. Uvicorn is the
-ASGI server that accepts requests and runs the application. In `app.main:app`,
-the left side is the Python module and the right side is its application object.
-
-```mermaid
-flowchart LR
-    Client --> Uvicorn --> FastAPI --> HealthRouter
-    HealthRouter --> JSON["200: status ok"]
-    Environment["Environment / .env"] --> Settings --> FastAPI
-```
-
-## Verification and manual test
-
-In a second PowerShell terminal:
-
-```powershell
-curl.exe -i http://127.0.0.1:8000/health
-curl.exe -I http://127.0.0.1:8000/docs
-```
-
-The health request must return HTTP 200 and `{"status":"ok"}`. Docs should
-return HTTP 200. Open `/docs`, expand **GET /health**, click **Try it out**, then
-**Execute**; expect the same JSON and status. Swagger UI is an interactive client
-generated from the API's OpenAPI description at `/openapi.json`. Its browser assets
-load from a CDN, so the interactive page needs internet access.
-
-| Endpoint | Purpose |
-| --- | --- |
-| `GET /health` | Application liveness only |
-| `GET /docs` | Swagger UI |
-| `GET /openapi.json` | Machine-readable API schema |
-
-Today uses live HTTP and PostgreSQL smoke checks. Parser/redactor Pytest coverage comes in later
-days. Health does not verify database connectivity or LLM availability.
-
-## Next days and boundaries
-
-Day 2 adds PostgreSQL/SQLAlchemy. Next: Day 3 uploads, Day 4 redaction/parsing,
-Day 5 statistics/evidence, Day 6 LLM/background processing, and Day 7 completes
-tests, Docker, and documentation. Use synthetic logs only. Week 1 excludes
-authentication, multi-tenancy, a frontend, live streaming, and automatic remediation.
-The planned analysis provides possible causes, never confirmed root causes.
-
-Suggested commit: `feat: add Day 2 PostgreSQL persistence and incident model`
+Suggested commit: `feat: integrate milestone 1.2 database lifecycle and readiness`
 
 Interview questions:
 
-1. What is the difference between a SQLAlchemy engine, session factory, and session?
-2. How does a FastAPI dependency using `yield` guarantee session cleanup?
-3. Why is `create_all` insufficient for evolving a production database schema?
+1. Why share an engine but not a session? The pool is reusable; session transaction
+   state belongs to one unit of work/request.
+2. Why import models before create_all? Imports register their table definitions
+   in Base.metadata, which create_all reads.
+3. What is commit versus flush? Flush sends SQL within a transaction; commit makes
+   it durable. Rollback can still undo a flush.
+4. How does get_db clean up after an exception? The generator resumes/unwinds its
+   context manager, closing the session and releasing its connection.
+5. Why localhost:5433 rather than db:5432? The API is on the WSL host; it uses the
+   published host port. db:5432 is the Compose-network address.
 
-## Day 2 concepts and verification
-
-The **engine** owns the connection pool. The **session factory** creates sessions;
-each **session** tracks ORM changes and manages a transaction. `flush()` sends
-pending SQL, `commit()` makes changes durable, and `rollback()` discards pending
-transaction changes. Unlike Django's common autocommit workflow, callers explicitly
-commit here. `get_db` will supply a session via `Depends(get_db)` in Day 3 routes.
-FastAPI runs the dependency before the endpoint and resumes it after `yield` to
-close the session, including on failure. The dependency does not commit for callers.
-
-`Base` collects table definitions, similar to Django's model registry. `Incident`
-is the database model; `IncidentResponse` is the public contract, similar to a DRF
-serializer. `from_attributes=True` lets Pydantic read ORM attributes. Internal
-`stored_file_path` is omitted. File metadata is nullable to represent `CREATED`
-incidents before uploads are introduced; timestamps use timezone-aware UTC.
-
-FastAPI's **lifespan** context runs before serving requests and during shutdown.
-Startup creates missing tables and proves database connectivity; shutdown disposes
-the engine. No connection is opened just by importing the database module.
-`create_all` is a learning shortcut: it does not migrate existing columns or enum
-values. Use Alembic after Week 1. Startup fails if PostgreSQL is unavailable.
-`GET /health` remains a liveness check and does not query PostgreSQL on each request.
-
-With the API running, execute in a second terminal:
-
-```powershell
-.\.venv-312\Scripts\python.exe -m scripts.verify_database
-curl.exe -i http://127.0.0.1:8000/health
-docker compose exec db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "\dt"'
-```
-
-Expect `PASS` from the verification script, HTTP 200 with `{"status":"ok"}`,
-and an `incidents` table. The script checks a synthetic insert/read, UUID generation,
-defaults, timezone-aware timestamps, JSON storage, response privacy, and rollback.
-It leaves no incident behind. In WSL use `python -m scripts.verify_database`.
-Manual test: restart Uvicorn, rerun these commands, and confirm existing tables
-remain usable. Swagger still exposes only `/health`; incident routes arrive Day 3.
-
-PostgreSQL data persists in a named volume. `docker compose stop db` stops the
-database while retaining data. PostgreSQL initialization variables apply only to
-an empty volume; editing `.env` does not change an existing database password.
-The published port binds to loopback. For a local/WSL API use `localhost`; the
-future Compose API service will use `db` as its database hostname. If port 5432
-is occupied, select another `POSTGRES_PORT` and update `DATABASE_URL` to match.
-API containerization is deferred to Day 7.
-
-Further reading: [SQLAlchemy sessions](https://docs.sqlalchemy.org/en/20/orm/session_basics.html),
-[FastAPI lifespan](https://fastapi.tiangolo.com/advanced/events/), and
-[Compose readiness](https://docs.docker.com/compose/how-tos/startup-order/).
-
-Verified locally on Python 3.12.2: Compose reports PostgreSQL healthy; application
-startup creates the table; the database verification script passes; `/health`,
-`/docs`, and `/openapi.json` return 200. The verification API is running on port
-8001, so use `http://127.0.0.1:8001/docs` for that process. To run it again:
-
-```powershell
-.\.venv-312\Scripts\python.exe -m uvicorn app.main:app --reload --port 8001
-```
-
-References: [FastAPI first steps](https://fastapi.tiangolo.com/tutorial/first-steps/)
-and [Pydantic settings](https://docs.pydantic.dev/latest/concepts/pydantic_settings/).
+References: [SQLAlchemy sessions](https://docs.sqlalchemy.org/en/20/orm/session_basics.html)
+and [FastAPI lifespan](https://fastapi.tiangolo.com/advanced/events/).

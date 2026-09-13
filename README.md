@@ -1,6 +1,73 @@
 ﻿# AI Incident & Log Analysis Copilot
 
-Current checkpoint: **Milestone 2.5 — verified on 2026-09-12**.
+Current checkpoint: **Phase 5 (Milestones 5.1–5.4) — verified on 2026-09-13**.
+Phase 5 adds Jinja2/Bootstrap authentication pages and application shell, the incident
+dashboard and upload/poll/retry workflow, analysis/evidence/event/similarity and runbook
+views, resolution and feedback forms, and authenticated RCA PDF reports. It adds no
+migration; schema revision `0005_phase4_retrieval` remains current. Local Ruff checks
+and 216 tests pass. The user reported the same 216 tests passed in WSL, all rebuilt
+Compose services are healthy, and the login, dashboard, and incident detail workflow work,
+and the downloaded RCA PDF opens with all required sections. See
+[the Phase 5 guide](docs/phase-5.md). No `.env` credential was read or changed.
+
+Previous checkpoint: **Phase 4 (Milestones 4.1–4.4) — verified on 2026-09-13**.
+Phase 4 adds pgvector-backed embeddings, runbook upload/indexing and cited Q&A,
+owner-scoped similar incidents, human-confirmed resolutions, and feedback. It advances
+the schema to `0005_phase4_retrieval` and changes the Compose database image to the
+PostgreSQL 16 pgvector distribution while preserving the named volume. Local Ruff
+checks and 213 tests pass. WSL migration preservation, schema upgrade to
+`0005_phase4_retrieval`, vector storage/exact retrieval, API readiness, Compose health,
+Celery response, and `runbook.index` registration all passed. See
+[the Phase 4 guide](docs/phase-4.md). No `.env` credential was read or changed, and no
+live provider call was made.
+
+Previous checkpoint: **Milestone 3.4 — verified on 2026-09-13**.
+The repository now contains a three-case synthetic evaluation dataset, deterministic
+offline scoring, a privacy-limited report, mocked provider coverage, and a doubly
+explicit opt-in command for live evaluation. No migration, dependency installation,
+Docker rebuild, provider credential, or `.env` change is required. See
+[the Milestone 3.4 guide](docs/milestone-3.4.md). Stop after this milestone.
+The WSL offline evaluation passed all eight metric groups for three synthetic cases;
+Ruff formatting and linting passed, and Pytest reported 205 passed.
+
+Previous checkpoint: **Milestone 3.3 — verified on 2026-09-13**.
+The pipeline now uses a provider-neutral
+interface, keeps OpenAI SDK calls in one adapter, stores normalized provider/model/
+prompt/token/duration metadata, and exposes the latest authorized analysis record.
+No migration, dependency installation, or `.env` change is required. See
+[the Milestone 3.3 guide](docs/milestone-3.3.md). Stop after this milestone.
+Local verification passed: Ruff formatting/linting and 198 tests with the same
+two dependency deprecation warnings. The user reported all 198 tests passed in WSL;
+all four rebuilt Docker services are healthy. Live deterministic checks passed job
+progress, retry eligibility, explicit reanalysis, and normalized provider metadata.
+Reviewed worker logs correlate both jobs to the incident and contain no prompt,
+raw uploaded content, credentials, model response, or token payload.
+
+Previous checkpoint: **Milestone 3.2 — verified on 2026-09-13**.
+The user reported 189 tests passed in WSL. Backup archive verification and PostgreSQL
+migration, preservation, worker-lock, and active-job uniqueness checks passed.
+The database is at `0004_analysis_jobs`; database smoke checks passed.
+All four Docker services are healthy. Live job progress, completion, retry eligibility,
+and explicit reanalysis checks passed. Recovery republished zero eligible jobs.
+See [the Milestone 3.2 guide](docs/milestone-3.2.md) for concepts, failure limits,
+and the backup/migration sequence. No dependency installation or credential change
+is required. Stop after this milestone.
+Local verification passed: Ruff formatting/linting and 189 tests with two dependency
+deprecation warnings.
+
+Previous checkpoint: **Milestone 3.1 — verified on 2026-09-12**.
+Incident uploads and file changes now publish tasks to a separate worker.
+Compose adds Redis and a worker sharing the API upload volume. No database migration
+is required. See [the Milestone 3.1 guide](docs/milestone-3.1.md) for concepts,
+delivery limits, configuration, and one-command-at-a-time verification.
+The user reported 176 tests passed in WSL. All four Docker services are healthy;
+worker ping passed. An upload stayed queued while the worker was stopped and
+completed with persisted analysis after restart. Worker logs preserved the upload
+request ID. Live multi-file checks passed upload, SHA-256, metadata privacy,
+combined analysis, attachment, deletion, and empty state. `.env` credentials are unchanged.
+Local Ruff formatting and linting passed; 176 tests passed with two dependency warnings.
+
+Previous checkpoint: **Milestone 2.5 — verified on 2026-09-12**.
 See [the milestone guide](docs/milestone-2.5.md).
 Local Ruff checks passed, and Pytest reported 165 passed with two dependency warnings.
 The user reported 165 tests passed in WSL. Both Docker services are healthy.
@@ -83,10 +150,18 @@ working configuration.
 | POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB | Database initialization settings; match the URL |
 | POSTGRES_PORT | Host port; default `5433`, container port remains `5432` |
 | API_PORT | Compose host API port; default `8000` |
+| REDIS_URL | WSL default `redis://localhost:6379/0`; Compose uses `redis://redis:6379/0` |
+| REDIS_PORT | Redis host port, default `6379`; loopback only |
+| ANALYSIS_MAX_ATTEMPTS | Total attempts per job, default 3, range 1–10 |
+| ANALYSIS_RETRY_SECONDS | Initial transient retry delay, default 5 seconds, range 1–60 |
 | UPLOAD_DIRECTORY | WSL default `uploads`; Compose overrides to `/app/uploads` |
 | MAX_UPLOAD_SIZE_MB | Positive upload limit, default `5` |
 | MAX_FILES_PER_INCIDENT | File count cap, default `10`, range 1–50 |
 | MAX_EVIDENCE_ITEMS | Evidence cap, default `30`, range 1–100 |
+| EMBEDDING_MODEL | Embedding provider model; default `text-embedding-3-small` |
+| EMBEDDING_DIMENSIONS | Fixed at `1536` to match migration `0005` |
+| RETRIEVAL_LIMIT / RETRIEVAL_SIMILARITY_THRESHOLD | Exact-search result cap and minimum cosine similarity |
+| RUNBOOK_CHUNK_CHARACTERS / RUNBOOK_CHUNK_OVERLAP | Validated text chunk sizing |
 | OPENAI_API_KEY | Optional until evidence-bearing model analysis is requested |
 | LLM_MODEL | Explicit model ID; OPENAI_MODEL is the compatibility fallback |
 | LLM_TIMEOUT_SECONDS | Provider timeout, default `60`, maximum `300` |
@@ -107,23 +182,24 @@ existing PostgreSQL role password. Preserve the database volume when troubleshoo
 From `/mnt/d/python/incident-copilot`, with `.venv-wsl` active:
 
 ```bash
-docker compose up -d --wait db
+docker compose up -d --wait db redis
 python -m scripts.migrate check
 python -m scripts.migrate upgrade
 python -m uvicorn app.main:app --reload --no-access-log
 ```
 
-Wait for `Application startup complete`. Use a second terminal for checks.
+Wait for `Application startup complete`. In another activated WSL terminal in the
+same project directory, start `python -m app.worker`. Use a third terminal for checks.
 Stop Uvicorn with Ctrl+C before starting the Compose API on the same port.
 
-## Run API and PostgreSQL in Compose
+## Run API, PostgreSQL, Redis, and worker in Compose
 
 Milestone 2.1 requires an explicit migration before starting the updated API.
 For existing data, complete the migration guide's backup and checks first.
 For container-only operation, build with `docker compose build api`, then use
 `API_PORT=8001 docker compose run --rm --no-deps api python -m scripts.migrate upgrade --container`
 while `db` is healthy. This one-off container publishes no API port. Stop API
-writers during migration. Startup checks the revision; it never changes the schema.
+and worker writers during migration. Startup checks the revision; it never changes the schema.
 
 Verified local setup: host port 8000 could not be published, so this workspace
 uses port **8001** with a temporary override, leaving `.env` unchanged:
@@ -154,13 +230,14 @@ your WSL URL to `db`.
 A **Docker image** packages the application and dependencies. A **container** runs
 that image. **Compose** starts related services on a shared network, where `db`
 is the database hostname. A **healthcheck** reports whether a service is ready;
-Compose waits for PostgreSQL before starting the API. A **named volume** keeps data
+Compose waits for PostgreSQL and Redis before starting the API and worker. A **named volume** keeps data
 outside a replaceable container. `postgres_data` preserves the existing database;
-`upload_data` stores new container uploads. Existing WSL upload files are not copied
+`upload_data` stores new container uploads and is shared with the worker;
+`redis_data` stores the Redis append-only log. Existing WSL upload files are not copied
 into that volume. Old records remain in the shared database, but stored WSL paths
 are not portable into the container. Use fresh synthetic uploads for this demo.
 
-Both published ports bind to loopback. API port 8000 maps to container port 8000;
+All published ports bind to loopback. API port 8000 maps to container port 8000;
 database host port 5433 maps to container port 5432. To stop while keeping data:
 
 ```bash
@@ -176,12 +253,16 @@ requirements changes. Recreate the API after runtime configuration changes.
 | Endpoint | Behavior |
 | --- | --- |
 | GET /health or /health/live | Liveness; no external checks |
-| GET /health/ready | Database connectivity, migration revision, and storage read/write readiness |
+| GET /health/ready | Database connectivity, migration revision, storage read/write, and Redis readiness |
 | GET /docs | Interactive Swagger UI |
 | GET /openapi.json | API contract |
 | POST /api/v1/incidents | Multipart upload; returns 202 and UPLOADED snapshot |
 | GET /api/v1/incidents | Paginated list, limit 1–100 and offset |
 | GET /api/v1/incidents/{id} | Stored incident and processing status |
+| GET /api/v1/incidents/{id}/jobs/latest | Persisted job progress, attempts, stage, and safe error |
+| POST /api/v1/incidents/{id}/analysis | Create a new analysis job for an editable incident |
+| POST /api/v1/incidents/{id}/analysis/retry | Create a new job after a failed analysis |
+| GET /api/v1/incidents/{id}/analysis | Latest normalized provider result and usage metadata |
 | GET /api/v1/incidents/{id}/files | Authorized file metadata; storage keys excluded |
 | POST /api/v1/incidents/{id}/files | Attach multipart log_files; 202 schedules combined analysis |
 | DELETE /api/v1/incidents/{id}/files/{file_id} | Remove file; 204, retriable storage cleanup |
@@ -193,6 +274,16 @@ requirements changes. Recreate the API after runtime configuration changes.
 | GET /api/v1/admin/users | Administrator-only paginated user list |
 | PATCH /api/v1/admin/users/{id} | Administrator-only role/active-state changes |
 | GET /api/v1/admin/audit-events | Administrator-only paginated audit list |
+| POST /api/v1/runbooks | Store and queue `.txt`, `.md`, or `.pdf` indexing |
+| GET /api/v1/runbooks | Owned/global runbook list |
+| GET/DELETE /api/v1/runbooks/{id} | Authorized runbook metadata/deletion |
+| POST /api/v1/runbooks/{id}/reindex | Queue replacement indexing |
+| POST /api/v1/runbooks/ask | Similarity retrieval and citation-validated answer |
+| GET /api/v1/incidents/{id}/similar | Owner-scoped similar historical incidents |
+| PATCH /api/v1/incidents/{id}/resolution | Human-confirmed root cause/resolution |
+| POST /api/v1/incidents/{id}/feedback | Resolution/analysis feedback |
+| GET /api/v1/incidents/{id}/events | Authorized filtered redacted events |
+| GET /api/v1/incidents/{id}/report.pdf | Authenticated bounded RCA PDF |
 
 Incident endpoints require authentication from Milestone 2.3 onward. List filters:
 `status`, `environment`, exact `service_name`, `severity`, timezone-aware
@@ -272,6 +363,17 @@ substitute for PostgreSQL and Docker smoke checks. No live model compatibility i
 claimed. Two previously observed dependency deprecation warnings are separate from
 test failures.
 
+Milestone 3.4 adds a local synthetic evaluation suite. Its default command makes no
+provider call and writes only aggregate/per-case scores and optional usage metadata:
+
+```bash
+python -m scripts.evaluate_ai
+```
+
+See [the evaluation guide](docs/milestone-3.4.md) for metric definitions, limitations,
+and the separately gated live-provider command. Offline fixture scores verify the
+harness; they are not evidence of live-model quality.
+
 ## How the backend works
 
 FastAPI maps HTTP requests to Python functions; routers group endpoints. Pydantic
@@ -287,23 +389,28 @@ one request-scoped session and closes it afterward. **commit** saves a transacti
 changes. Alembic now manages schema changes; startup table creation is removed.
 
 An upload is validated and stored under a generated filename, then committed.
-FastAPI BackgroundTasks runs processing after the response using its own session:
+The API publishes an identifier to Redis; a separate Celery worker opens its own
+session and processes the incident through:
 PARSING → CALCULATING → GENERATING_ANALYSIS → VALIDATING → COMPLETED, or FAILED.
 No-evidence results bypass the provider. Only redacted statistics/evidence are sent
 to the model. Returned citations must reference selected evidence IDs. Polling the
 detail endpoint lets clients observe the saved state.
 
-## Phase 1 boundaries
+## Current boundaries
 
 Use synthetic logs only. Raw uploaded files remain on disk; redaction recognizes
 known patterns and is not a guarantee against every secret. Upload size is checked
 while copying after framework multipart parsing; this is not a deployment-wide
 request quota. Milestone 2.3 enforces user ownership and administrator permissions
 on existing incident routes. There is no organization-level tenancy, retention automation,
-or automatic remediation. BackgroundTasks is in-process: a crash can strand an
-incident, and no durable retry queue is provided. Durable workers belong to later
-milestones. Stop at Milestone 2.5 for the current checkpoint. Keep this learning
-instance on loopback.
+or automatic remediation. Redis queues waiting tasks; PostgreSQL now records jobs
+and retry limits. Unfinished jobs can be republished with the recovery command.
+External model calls can repeat after crashes, and recovery scheduling is manual;
+see the 3.2 guide for delivery and checkpoint limits. The evaluation suite is synthetic
+and small, so it is not a production quality gate. Phase 4 retrieval is exact and
+owner-scoped; live embeddings require explicit provider configuration. Stop after
+Phase 5 for the current checkpoint. The browser uses session storage bearer tokens and
+does not yet rotate refresh tokens automatically. Keep this learning instance on loopback.
 
 Docker references: [startup order](https://docs.docker.com/compose/how-tos/startup-order/)
 and [Dockerfile best practices](https://docs.docker.com/build/building/best-practices/).

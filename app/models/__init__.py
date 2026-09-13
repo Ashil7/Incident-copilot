@@ -10,6 +10,9 @@ from app.models.processing import IncidentAnalysis as IncidentAnalysis
 from app.models.processing import LogEvent as LogEvent
 from app.models.processing import LogFile as LogFile
 from app.models.processing import StorageDeletion as StorageDeletion
+from app.models.retrieval import IncidentEmbedding as IncidentEmbedding
+from app.models.retrieval import Runbook as Runbook
+from app.models.retrieval import RunbookChunk as RunbookChunk
 from app.models.users import RefreshToken as RefreshToken
 from app.models.users import User as User
 from app.models.users import UserRole as UserRole

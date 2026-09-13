@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     app_name: str = Field(default="AI Incident Copilot", min_length=1)
     app_env: Literal["development", "test", "production"] = "development"
     debug: bool = False
+    redis_url: SecretStr = SecretStr("redis://localhost:6379/0")
+    analysis_max_attempts: int = Field(default=3, ge=1, le=10)
+    analysis_retry_seconds: int = Field(default=5, ge=1, le=60)
     jwt_secret_key: SecretStr = SecretStr("")
     jwt_issuer: str = Field(default="incident-copilot", min_length=1)
     jwt_audience: str = Field(default="incident-copilot-api", min_length=1)
@@ -47,6 +50,20 @@ class Settings(BaseSettings):
     max_upload_size_mb: int = Field(default=5, gt=0)
     max_files_per_incident: int = Field(default=10, ge=1, le=50)
     max_evidence_items: int = Field(default=30, ge=1, le=100)
+    embedding_model: str = "text-embedding-3-small"
+    embedding_dimensions: Literal[1536] = 1536
+    retrieval_limit: int = Field(default=5, ge=1, le=20)
+    retrieval_similarity_threshold: float = Field(default=0.35, ge=0, le=1)
+    runbook_chunk_characters: int = Field(default=1800, ge=200, le=8000)
+    runbook_chunk_overlap: int = Field(default=200, ge=0, le=1000)
+
+    @field_validator("runbook_chunk_overlap")
+    @classmethod
+    def validate_chunk_overlap(cls, value: int, info) -> int:
+        size = info.data.get("runbook_chunk_characters", 1800)
+        if value >= size:
+            raise ValueError("RUNBOOK_CHUNK_OVERLAP must be smaller than the chunk size")
+        return value
 
     @field_validator("database_url")
     @classmethod

@@ -1,0 +1,111 @@
+[
+  {
+    "id": "healthy_request",
+    "log": "2026-09-13T10:00:00Z INFO GET /health 200 10ms\n",
+    "secrets": [],
+    "expected_fields": [
+      {"line_number": 1, "level": "INFO", "endpoint": "/health", "status_code": 200}
+    ],
+    "expected_statistics": {
+      "total_lines": 1,
+      "parsed_events": 1,
+      "error_count": 0,
+      "http_error_count": 0
+    },
+    "expected_incident_type": "INSUFFICIENT_EVIDENCE",
+    "required_information_gaps": ["No error evidence was selected."],
+    "supported_claims": [],
+    "fixture_analysis": {
+      "title": "No error evidence selected",
+      "severity": "LOW",
+      "incident_type": "INSUFFICIENT_EVIDENCE",
+      "summary": "The supplied event did not meet the evidence-selection criteria.",
+      "affected_components": [],
+      "observations": [],
+      "possible_causes": [],
+      "recommended_checks": [],
+      "information_gaps": ["No error evidence was selected."],
+      "suggested_escalation_team": null
+    }
+  },
+  {
+    "id": "upstream_http_failure",
+    "log": "2026-09-13T10:01:00Z ERROR GET /api/orders 502 1200ms Upstream unavailable\n2026-09-13T10:02:00Z ERROR GET /api/orders 504 5000ms Upstream timeout\n",
+    "secrets": [],
+    "expected_fields": [
+      {"line_number": 1, "level": "ERROR", "endpoint": "/api/orders", "status_code": 502},
+      {"line_number": 2, "level": "ERROR", "endpoint": "/api/orders", "status_code": 504}
+    ],
+    "expected_statistics": {
+      "total_lines": 2,
+      "parsed_events": 2,
+      "error_count": 2,
+      "http_error_count": 2,
+      "status_counts": {"502": 1, "504": 1}
+    },
+    "expected_incident_type": "HTTP_FAILURE",
+    "required_information_gaps": ["Dependency health and metrics are unavailable."],
+    "supported_claims": [
+      "Two HTTP error responses affected /api/orders.",
+      "An upstream dependency failure is possible."
+    ],
+    "fixture_analysis": {
+      "title": "Order endpoint returned upstream errors",
+      "severity": "HIGH",
+      "incident_type": "HTTP_FAILURE",
+      "summary": "Two synthetic order requests returned upstream HTTP errors.",
+      "affected_components": ["/api/orders"],
+      "observations": [
+        {"text": "Two HTTP error responses affected /api/orders.", "evidence_ids": ["E1", "E2"]}
+      ],
+      "possible_causes": [
+        {"cause": "An upstream dependency failure is possible.", "confidence": 0.6, "evidence_ids": ["E1", "E2"]}
+      ],
+      "recommended_checks": [
+        {"order": 1, "action": "Inspect dependency health and latency.", "command": null, "risk": "READ_ONLY"}
+      ],
+      "information_gaps": ["Dependency health and metrics are unavailable."],
+      "suggested_escalation_team": "Order service owner"
+    }
+  },
+  {
+    "id": "authentication_failure_with_secrets",
+    "log": "2026-09-13T10:03:00Z ERROR POST /login 401 15ms password=synthetic-secret\n2026-09-13T10:03:01Z ERROR Authorization: Bearer synthetic-token\n",
+    "secrets": ["synthetic-secret", "synthetic-token"],
+    "expected_fields": [
+      {"line_number": 1, "level": "ERROR", "endpoint": "/login", "status_code": 401},
+      {"line_number": 2, "level": "ERROR"}
+    ],
+    "expected_statistics": {
+      "total_lines": 2,
+      "parsed_events": 2,
+      "error_count": 2,
+      "http_error_count": 1,
+      "status_counts": {"401": 1}
+    },
+    "expected_incident_type": "AUTHENTICATION_FAILURE",
+    "required_information_gaps": ["Identity-provider status is unavailable."],
+    "supported_claims": [
+      "A synthetic login request returned HTTP 401.",
+      "An authentication configuration or identity-provider issue is possible."
+    ],
+    "fixture_analysis": {
+      "title": "Synthetic login authentication failure",
+      "severity": "MEDIUM",
+      "incident_type": "AUTHENTICATION_FAILURE",
+      "summary": "The selected evidence contains a synthetic failed login.",
+      "affected_components": ["/login"],
+      "observations": [
+        {"text": "A synthetic login request returned HTTP 401.", "evidence_ids": ["E1"]}
+      ],
+      "possible_causes": [
+        {"cause": "An authentication configuration or identity-provider issue is possible.", "confidence": 0.5, "evidence_ids": ["E1"]}
+      ],
+      "recommended_checks": [
+        {"order": 1, "action": "Inspect authentication service health and configuration.", "command": null, "risk": "READ_ONLY"}
+      ],
+      "information_gaps": ["Identity-provider status is unavailable."],
+      "suggested_escalation_team": "Identity service owner"
+    }
+  }
+]

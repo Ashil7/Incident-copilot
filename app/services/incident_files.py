@@ -7,7 +7,7 @@ from pathlib import Path
 from fastapi import HTTPException
 from sqlalchemy import select
 
-from app.models import Incident, IncidentStatus, LogFile, StorageDeletion, UserRole
+from app.models import AnalysisJob, Incident, IncidentStatus, LogFile, StorageDeletion, UserRole
 from app.services.storage import get_storage
 from app.services.uploads import CHUNK_SIZE, store_upload
 
@@ -25,6 +25,13 @@ def owned_incident(session, incident_id, user, lock=False):
     if incident is None:
         raise HTTPException(404, "Incident not found.")
     if lock and incident.status not in EDITABLE:
+        raise HTTPException(409, "Files cannot change while analysis is queued or running.")
+    if lock and session.scalar(
+        select(AnalysisJob.id).where(
+            AnalysisJob.incident_id == incident.id,
+            AnalysisJob.status.in_(("PENDING", "RUNNING", "RETRY")),
+        )
+    ):
         raise HTTPException(409, "Files cannot change while analysis is queued or running.")
     return incident
 

@@ -10,10 +10,14 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
     UniqueConstraint,
+    false,
+    text,
+    true,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -67,7 +71,21 @@ class AnalysisJob(IdentityMixin, Base):
     __table_args__ = (
         CheckConstraint("progress >= 0 AND progress <= 100", name="ck_analysis_jobs_progress"),
         CheckConstraint("attempt_count >= 0", name="ck_analysis_jobs_attempts"),
+        Index(
+            "uq_analysis_jobs_active",
+            "incident_id",
+            unique=True,
+            postgresql_where=text("status IN ('PENDING', 'RUNNING', 'RETRY')"),
+            sqlite_where=text("status IN ('PENDING', 'RUNNING', 'RETRY')"),
+        ),
     )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, server_default=text("CURRENT_TIMESTAMP")
+    )
+    request_id: Mapped[str | None] = mapped_column(String(36))
+    retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    analyze: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
+    cleanup: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     incident_id: Mapped[str] = mapped_column(ForeignKey("incidents.id"), index=True)
     celery_task_id: Mapped[str | None] = mapped_column(String(255), unique=True)
     status: Mapped[str] = mapped_column(String(40), default="PENDING", index=True)

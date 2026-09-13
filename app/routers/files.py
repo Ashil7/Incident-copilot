@@ -1,12 +1,10 @@
 """Ownership-protected file sets; edits serialize against pipeline claims."""
 
-import logging
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import (
     APIRouter,
-    BackgroundTasks,
     Depends,
     File,
     HTTPException,
@@ -26,14 +24,14 @@ from app.services.audit import record_event
 from app.services.incident_files import (
     add_file,
     adopt_legacy,
-    cleanup_pending,
     discard_saved,
     file_rows,
     owned_incident,
     reset_analysis,
 )
-from app.services.pipeline import run_analysis
+from app.services.jobs import new_job
 from app.services.storage import get_storage
+from app.task_queue import enqueue_processing
 
 router = APIRouter(prefix="/api/v1/incidents/{incident_id}/files", tags=["Incident files"])
 Database = Annotated[Session, Depends(get_db)]
@@ -50,7 +48,6 @@ def list_files(incident_id: UUID, session: Database, user: CurrentUser):
 def attach_files(
     incident_id: UUID,
     request: Request,
-    tasks: BackgroundTasks,
     session: Database,
     user: CurrentUser,
     log_files: Annotated[list[UploadFile], File()],
@@ -73,9 +70,10 @@ def attach_files(
         reset_analysis(incident, True)
         if not existing:
             incident.original_filename = log_files[0].filename
+        job = new_job(session, incident)
         session.commit()
         committed = True
-        tasks.add_task(run_analysis, incident.id, request.app.state.session_factory, settings)
+        enqueue_processing(request, incident.id, job_id=job.id)
         return added
     except (OSError, SQLAlchemyError):
         raise HTTPException(503, "Unable to attach files.") from None
@@ -91,21 +89,11 @@ def attach_files(
                 upload.file.close()
 
 
-def after_delete(factory, settings, incident_id, analyze):
-    try:
-        cleanup_pending(factory, settings)
-    except Exception:
-        logging.getLogger(__name__).warning("storage.cleanup_deferred")
-    if analyze:
-        run_analysis(incident_id, factory, settings)
-
-
 @router.delete("/{file_id}", status_code=204)
 def delete_file(
     incident_id: UUID,
     file_id: UUID,
     request: Request,
-    tasks: BackgroundTasks,
     session: Database,
     user: CurrentUser,
 ):
@@ -125,13 +113,10 @@ def delete_file(
         reset_analysis(incident, bool(remaining))
         incident.original_filename = remaining[0].original_filename if remaining else None
         record_event(session, user.id, "file.deleted", "log_file", target.id)
+        job = new_job(session, incident, analyze=bool(remaining), cleanup=True)
         session.commit()
-        tasks.add_task(
-            after_delete,
-            request.app.state.session_factory,
-            request.app.state.settings,
-            incident.id,
-            bool(remaining),
+        enqueue_processing(
+            request, incident.id, analyze=bool(remaining), cleanup=True, job_id=job.id
         )
         return Response(status_code=204)
     except SQLAlchemyError:

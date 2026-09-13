@@ -5,6 +5,7 @@ services:
     environment:
       UPLOAD_DIRECTORY: /app/uploads
       DEBUG: "false"
+      REDIS_URL: redis://redis:6379/0
     ports:
       - "127.0.0.1:${API_PORT:-8000}:8000"
     volumes:
@@ -12,14 +13,50 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=3).close()"]
       interval: 5s
       timeout: 5s
       retries: 10
       start_period: 15s
+  worker:
+    build: .
+    command: ["python", "-m", "app.worker", "--container"]
+    env_file: .env
+    environment:
+      UPLOAD_DIRECTORY: /app/uploads
+      REDIS_URL: redis://redis:6379/0
+      DEBUG: "false"
+    volumes:
+      - upload_data:/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    stop_grace_period: 120s
+    healthcheck:
+      test: ["CMD", "python", "-m", "scripts.verify_worker", "--container"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec", "--maxmemory-policy", "noeviction"]
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
   db:
-    image: postgres:16
+    image: pgvector/pgvector:pg16
     environment:
       POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
@@ -36,5 +73,6 @@ services:
       start_period: 10s
 
 volumes:
+  redis_data:
   upload_data:
   postgres_data:

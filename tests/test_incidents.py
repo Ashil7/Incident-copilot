@@ -11,9 +11,9 @@ from sqlalchemy.orm import Session
 
 
 @pytest.fixture(autouse=True)
-def isolate_upload_tests(monkeypatch: pytest.MonkeyPatch, incident_user) -> None:
+def isolate_upload_tests(monkeypatch: pytest.MonkeyPatch, incident_user, client) -> None:
     # Pipeline execution has its own integration tests; keep these focused on storage.
-    monkeypatch.setattr("app.routers.incidents.run_analysis", lambda *args: None)
+    monkeypatch.setattr(client.app.state.task_queue, "enqueue", lambda *args, **kwargs: None)
 
 
 def upload(client: TestClient, name: str = "sample.log", body: bytes = b"INFO synthetic\n"):

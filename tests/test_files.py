@@ -92,7 +92,7 @@ def test_failed_attachment_preserves_existing_files_and_analysis(client):
 
 
 def test_active_pipeline_blocks_mutation(client, monkeypatch):
-    monkeypatch.setattr("app.routers.incidents.run_analysis", lambda *args: None)
+    monkeypatch.setattr(client.app.state.task_queue, "enqueue", lambda *args, **kwargs: None)
     incident_id = create(client).json()["id"]
     path = f"/api/v1/incidents/{incident_id}/files"
     row = client.get(path).json()[0]

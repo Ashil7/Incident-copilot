@@ -34,7 +34,9 @@ class LocalStorage:
         self.scope = hashlib.sha256(str(self.root).encode("utf-8")).hexdigest()
 
     def path(self, key: str) -> Path:
-        if not re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\.(?:log|txt|json)", key):
+        if not re.fullmatch(
+            r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\.(?:log|txt|json|md|pdf)", key
+        ):
             raise ValueError("Invalid storage key.")
         path = self.root / key
         if path.is_symlink() or not path.resolve().is_relative_to(self.root):

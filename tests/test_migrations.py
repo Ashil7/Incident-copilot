@@ -9,7 +9,7 @@ from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, inspect, select, text
+from sqlalchemy import MetaData, Table, create_engine, inspect, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
@@ -133,7 +133,34 @@ def test_normalized_email_unique_and_owner_foreign_key(database_engine):
             with pytest.raises(IntegrityError):
                 session.commit()
             session.rollback()
+
             session.add(Incident(title="Invalid owner", owner_user_id=str(uuid4())))
             with pytest.raises(IntegrityError):
                 session.commit()
             session.rollback()
+
+
+@pytest.mark.parametrize("status", ["PENDING", "COMPLETED"])
+def test_job_upgrade_preserves_existing_rows(status):
+    engine = create_engine("sqlite://")
+    try:
+        with engine.begin() as connection:
+            command.upgrade(migration_config(connection), "0003_storage_cleanup")
+            incident_id = connection.execute(
+                Incident.__table__.insert().values(title="Preserve job").returning(Incident.id)
+            ).scalar_one()
+            old = Table("analysis_jobs", MetaData(), autoload_with=connection)
+            job_id = str(uuid4())
+            connection.execute(
+                old.insert().values(
+                    id=job_id, incident_id=incident_id, status=status, progress=0, attempt_count=1
+                )
+            )
+            before = dict(connection.execute(select(old)).mappings().one())
+            upgrade_database(connection)
+            assert dict(connection.execute(select(old)).mappings().one()) == before
+            assert connection.execute(
+                text("SELECT analyze FROM analysis_jobs WHERE id=:id"), {"id": job_id}
+            ).scalar()
+    finally:
+        engine.dispose()

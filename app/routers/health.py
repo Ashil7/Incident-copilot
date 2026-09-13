@@ -4,6 +4,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
+from redis.exceptions import RedisError
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -39,4 +40,8 @@ def readiness(request: Request, session: Session = Depends(get_db)) -> HealthRes
         get_storage(request.app.state.settings).check_ready()
     except (OSError, ValueError):
         raise DomainError("STORAGE_UNAVAILABLE") from None
+    try:
+        request.app.state.task_queue.check_ready()
+    except (RedisError, OSError):
+        raise DomainError("QUEUE_UNAVAILABLE") from None
     return HealthResponse()

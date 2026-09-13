@@ -6,7 +6,6 @@ from uuid import UUID
 
 from fastapi import (
     APIRouter,
-    BackgroundTasks,
     Depends,
     File,
     Form,
@@ -25,8 +24,9 @@ from app.models import Environment, Incident, IncidentStatus, User, UserRole
 from app.schemas import IncidentResponse
 from app.services.audit import record_event
 from app.services.incident_files import add_file, discard_saved
-from app.services.pipeline import run_analysis
+from app.services.jobs import new_job
 from app.services.storage import get_storage
+from app.task_queue import enqueue_processing
 
 router = APIRouter(prefix="/api/v1/incidents", tags=["Incidents"])
 DatabaseSession = Annotated[Session, Depends(get_db)]
@@ -36,7 +36,6 @@ CurrentUser = Annotated[User, Depends(get_current_user)]
 @router.post("", response_model=IncidentResponse, status_code=202)
 def create_incident(
     request: Request,
-    background_tasks: BackgroundTasks,
     session: DatabaseSession,
     user: CurrentUser,
     title: Annotated[str, Form(min_length=1, max_length=200)],
@@ -72,11 +71,10 @@ def create_incident(
             record_event(session, user.id, "file.uploaded", "log_file", row.id)
         response = IncidentResponse.model_validate(incident)
         record_event(session, user.id, "incident.created", "incident", incident.id)
+        job = new_job(session, incident)
         session.commit()
         committed = True
-        background_tasks.add_task(
-            run_analysis, incident.id, request.app.state.session_factory, settings
-        )
+        enqueue_processing(request, incident.id, job_id=job.id)
         return response
     except (OSError, SQLAlchemyError):
         raise HTTPException(503, "Unable to store incident. Please retry later.") from None

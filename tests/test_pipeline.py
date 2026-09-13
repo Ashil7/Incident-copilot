@@ -11,7 +11,8 @@ from sqlalchemy.orm import Session
 
 from app.analysis_schemas import IncidentAnalysis, validate_evidence_references
 from app.config import Settings
-from app.services import llm_service, pipeline
+from app.models import IncidentAnalysis as IncidentAnalysisRow
+from app.services import llm_service, openai_provider, pipeline
 
 
 @pytest.fixture(autouse=True)
@@ -92,6 +93,12 @@ def test_background_success_redaction_and_transitions(
     assert "synthetic-secret" not in json.dumps(detail)
     assert set(captured[0]) == {"statistics", "evidence"}
     assert {"CALCULATING", "GENERATING_ANALYSIS", "VALIDATING", "COMPLETED"} <= set(states)
+    with client.app.state.session_factory() as session:
+        stored = (
+            session.query(IncidentAnalysisRow).filter_by(incident_id=response.json()["id"]).one()
+        )
+        assert stored.provider == "mock"
+        assert stored.result["severity"] == "HIGH"
     pipeline.run_analysis(
         response.json()["id"], client.app.state.session_factory, client.app.state.settings
     )
@@ -131,7 +138,7 @@ def test_missing_upload_records_safe_failure(client: TestClient, monkeypatch) ->
     from app.services.incident_files import file_rows
     from app.services.storage import get_storage
 
-    monkeypatch.setattr("app.routers.incidents.run_analysis", lambda *args: None)
+    monkeypatch.setattr(client.app.state.task_queue, "enqueue", lambda *args, **kwargs: None)
     response = post(client)
     incident_id = response.json()["id"]
     with client.app.state.session_factory() as session:
@@ -188,12 +195,15 @@ def test_sdk_adapter_contract(monkeypatch: pytest.MonkeyPatch, completed: bool) 
     response = client.responses.parse.return_value
     response.status = "completed" if completed else "incomplete"
     response.output_parsed = IncidentAnalysis.model_validate(result()) if completed else None
-    response.usage = None
-    monkeypatch.setattr(llm_service, "OpenAI", constructor)
+    response.usage = MagicMock(input_tokens=123, output_tokens=45)
+    monkeypatch.setattr(openai_provider, "OpenAI", constructor)
     settings = Settings(_env_file=None, openai_api_key="fake-test-key", llm_model="test-model")
     payload = {"statistics": {"error_count": 1}, "evidence": []}
     if completed:
-        assert llm_service.generate_analysis(payload, settings)["model"] == "test-model"
+        generated = llm_service.generate_analysis(payload, settings)
+        assert generated["model"] == "test-model"
+        assert generated["prompt_version"] == "incident_analysis_v1"
+        assert generated["usage"] == {"input_tokens": 123, "output_tokens": 45}
     else:
         with pytest.raises(ValueError):
             llm_service.generate_analysis(payload, settings)
@@ -203,3 +213,24 @@ def test_sdk_adapter_contract(monkeypatch: pytest.MonkeyPatch, completed: bool) 
     assert "tools" not in kwargs
     assert "untrusted data" in kwargs["instructions"]
     assert json.loads(kwargs["input"]) == payload
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        lambda data: data["observations"][0].update(evidence_ids=["E1", "E1"]),
+        lambda data: data["recommended_checks"][0].update(order=2),
+        lambda data: data.update(affected_components=["api", "api"]),
+        lambda data: data.update(summary=""),
+    ],
+)
+def test_stronger_output_validation(change) -> None:
+    data = result()
+    change(data)
+    if data["observations"][0]["evidence_ids"] == ["E1", "E1"]:
+        analysis = IncidentAnalysis.model_validate(data)
+        with pytest.raises(ValueError, match="duplicate evidence"):
+            validate_evidence_references(analysis, {"E1"})
+    else:
+        with pytest.raises(ValidationError):
+            IncidentAnalysis.model_validate(data)

@@ -41,7 +41,7 @@ def block_live_provider(monkeypatch: pytest.MonkeyPatch) -> None:
     def blocked(*args, **kwargs):
         raise AssertionError("Tests must mock the provider; live API calls are forbidden.")
 
-    monkeypatch.setattr("app.services.llm_service.OpenAI", blocked)
+    monkeypatch.setattr("app.services.openai_provider.OpenAI", blocked)
 
 
 @pytest.fixture
@@ -62,6 +62,33 @@ def client(
     # Prevent even the module-level app from reading the developer's .env.
     monkeypatch.setitem(Settings.model_config, "env_file", None)
     from app.main import create_app
+
+    class InlineTestQueue:
+        """Offline adapter only: integration tests use the existing isolated database."""
+
+        def __init__(self, settings):
+            self.settings = settings
+
+        def check_ready(self):
+            pass
+
+        def close(self):
+            pass
+
+        def enqueue(self, incident_id, request_id, *, analyze=True, cleanup=False, job_id=None):
+            from app.database import create_session_factory
+            from app.services.jobs import RetryJob, run_job
+
+            factory = create_session_factory(database_engine)
+            try:
+                run_job(job_id, factory, self.settings)
+            except RetryJob:
+                pass  # Explicit retry tests advance the persisted due time.
+
+        def enqueue_runbook(self, runbook_id, request_id):
+            pass
+
+    monkeypatch.setattr("app.main.TaskQueue", InlineTestQueue)
 
     settings = Settings(
         _env_file=None,

@@ -9,6 +9,10 @@ from starlette.exceptions import HTTPException
 from app.observability import request_id_context
 
 CATALOG = {
+    "QUEUE_UNAVAILABLE": (
+        503,
+        "Queue unavailable. Changes may already be saved; inspect the incident before retrying.",
+    ),
     "INCIDENT_NOT_FOUND": (404, "Incident not found."),
     "FILE_NOT_FOUND": (404, "File not found."),
     "USER_NOT_FOUND": (404, "User not found."),

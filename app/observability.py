@@ -9,6 +9,10 @@ from uuid import UUID
 
 request_id_context: ContextVar[str | None] = ContextVar("request_id", default=None)
 EVENTS = {
+    "analysis.retry",
+    "queue.publish_failed",
+    "worker.started",
+    "worker.failed",
     "request.completed",
     "request.failed",
     "background.failed",

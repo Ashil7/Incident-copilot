@@ -3,7 +3,7 @@
 from alembic.migration import MigrationContext
 from sqlalchemy import Connection, text
 
-SCHEMA_HEAD = "0003_storage_cleanup"
+SCHEMA_HEAD = "0005_phase4_retrieval"
 
 
 def verify_schema(connection: Connection) -> None:

@@ -9,16 +9,27 @@ from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from sqlalchemy import select, text
+from sqlalchemy.exc import IntegrityError
 
 from app import models  # noqa: F401 -- Register all tables for comparison.
 from app.config import Settings
 from app.container import container_settings
 from app.database import Base, create_database_engine
 from app.migration_state import verify_schema
+from app.services.jobs import incident_lock
 from scripts.migrate import BASELINE, migration_config, upgrade_database
 
 
 def verify(engine) -> None:
+    # Separate physical connections must exclude each other; no application rows touched.
+    lock_id = str(uuid4())
+    with incident_lock(engine, lock_id) as first:
+        with incident_lock(engine, lock_id) as second:
+            if not first or second:
+                raise RuntimeError("Worker lock exclusion failed")
+    with incident_lock(engine, lock_id) as released:
+        if not released:
+            raise RuntimeError("Worker lock was not released")
     for legacy in (False, True):
         with engine.connect() as connection:
             transaction = connection.begin()
@@ -59,6 +70,28 @@ def verify(engine) -> None:
                 if table is not None:
                     if dict(connection.execute(select(table)).mappings().one()) != before:
                         raise RuntimeError("Legacy data changed")
+                incident_id = connection.execute(
+                    models.Incident.__table__.insert()
+                    .values(title="Synthetic job uniqueness check")
+                    .returning(models.Incident.id)
+                ).scalar_one()
+                jobs = models.AnalysisJob.__table__
+                connection.execute(jobs.insert().values(incident_id=incident_id, status="PENDING"))
+                try:
+                    with connection.begin_nested():
+                        connection.execute(
+                            jobs.insert().values(incident_id=incident_id, status="RUNNING")
+                        )
+                except IntegrityError:
+                    pass
+                else:
+                    raise RuntimeError("Active-job uniqueness failed")
+                connection.execute(
+                    jobs.update()
+                    .where(jobs.c.incident_id == incident_id)
+                    .values(status="COMPLETED")
+                )
+                connection.execute(jobs.insert().values(incident_id=incident_id, status="PENDING"))
                 # Only this disposable schema is downgraded. Application tables are untouched.
                 command.downgrade(migration_config(connection), BASELINE)
                 upgrade_database(connection)
@@ -79,7 +112,7 @@ def main() -> None:
         engine = create_database_engine(settings)
         verify(engine)
         print(
-            "PASS: fresh and legacy PostgreSQL migrations, schema comparison, preserved data, downgrade/re-upgrade; temporary schemas rolled back."
+            "PASS: fresh and legacy PostgreSQL migrations, schema comparison, preserved data, downgrade/re-upgrade, worker lock exclusion, active-job uniqueness; temporary schemas rolled back."
         )
     except Exception:
         print(

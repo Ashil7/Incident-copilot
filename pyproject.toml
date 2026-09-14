@@ -16,3 +16,4 @@ source = ["app"]
 
 [tool.coverage.report]
 show_missing = true
+fail_under = 90

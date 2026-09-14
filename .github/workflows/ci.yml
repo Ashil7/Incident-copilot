@@ -1,0 +1,43 @@
+name: CI
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: incident_ci
+          POSTGRES_PASSWORD: synthetic-ci-password
+          POSTGRES_DB: incident_ci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U incident_ci -d incident_ci"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s
+          --health-timeout 3s --health-retries 10
+    env:
+      DATABASE_URL: postgresql+psycopg://incident_ci:synthetic-ci-password@localhost:5432/incident_ci
+      REDIS_URL: redis://localhost:6379/0
+      JWT_SECRET_KEY: synthetic-ci-signing-key-at-least-32-bytes
+      APP_ENV: test
+      ALLOW_REGISTRATION: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -r requirements.txt -r requirements-dev.txt
+      - run: python -m ruff format --check app tests scripts
+      - run: python -m ruff check app tests scripts
+      - run: python -m scripts.migrate upgrade
+      - run: python -m scripts.verify_migrations
+      - run: python -m pytest --cov=app --cov-report=term-missing
+      - run: docker build --check .

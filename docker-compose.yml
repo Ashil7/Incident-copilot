@@ -10,6 +10,12 @@ services:
       - "127.0.0.1:${API_PORT:-8000}:8000"
     volumes:
       - upload_data:/app/uploads
+    read_only: true
+    tmpfs: [/tmp]
+    init: true
+    restart: unless-stopped
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
     depends_on:
       db:
         condition: service_healthy
@@ -31,6 +37,12 @@ services:
       DEBUG: "false"
     volumes:
       - upload_data:/app/uploads
+    read_only: true
+    tmpfs: [/tmp]
+    init: true
+    restart: unless-stopped
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
     depends_on:
       db:
         condition: service_healthy
@@ -50,6 +62,7 @@ services:
       - "127.0.0.1:${REDIS_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -65,6 +78,7 @@ services:
       - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
       interval: 5s

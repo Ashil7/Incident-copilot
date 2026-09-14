@@ -1,0 +1,26 @@
+services:
+  api:
+    ports: !reset []
+    environment:
+      APP_ENV: production
+      DEBUG: "false"
+  worker:
+    environment:
+      APP_ENV: production
+      DEBUG: "false"
+  db:
+    ports: !reset []
+  redis:
+    ports: !reset []
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports: ["80:80"]
+    volumes:
+      - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      api:
+        condition: service_healthy
+    read_only: true
+    tmpfs: [/var/cache/nginx, /var/run]
+    security_opt: [no-new-privileges:true]

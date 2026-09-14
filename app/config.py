@@ -47,6 +47,10 @@ class Settings(BaseSettings):
     llm_model: str = ""
     llm_timeout_seconds: float = Field(default=60, gt=0, le=300)
     upload_directory: Path = Path("uploads")
+    storage_backend: Literal["local", "s3"] = "local"
+    s3_bucket: str = ""
+    s3_region: str = ""
+    s3_endpoint_url: str = ""
     max_upload_size_mb: int = Field(default=5, gt=0)
     max_files_per_incident: int = Field(default=10, ge=1, le=50)
     max_evidence_items: int = Field(default=30, ge=1, le=100)
@@ -64,6 +68,10 @@ class Settings(BaseSettings):
         if value >= size:
             raise ValueError("RUNBOOK_CHUNK_OVERLAP must be smaller than the chunk size")
         return value
+
+    def validate_storage_configuration(self) -> None:
+        if self.storage_backend == "s3" and not self.s3_bucket.strip():
+            raise RuntimeError("S3_BUCKET is required when STORAGE_BACKEND=s3.")
 
     @field_validator("database_url")
     @classmethod

@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import BinaryIO, Protocol
 from uuid import uuid4
 
+import boto3
+
 from app.config import PROJECT_ROOT, Settings
 
 
@@ -78,7 +80,62 @@ class LocalStorage:
                 raise OSError("Storage readiness probe failed.")
 
 
-def get_storage(settings: Settings) -> LocalStorage:
+class S3Storage:
+    """S3-compatible object storage; credentials come from the standard AWS chain."""
+
+    def __init__(self, bucket: str, region: str = "", endpoint_url: str = ""):
+        self.bucket = bucket
+        self.scope = hashlib.sha256(
+            f"s3:{endpoint_url}:{region}:{bucket}".encode("utf-8")
+        ).hexdigest()
+        self.client = boto3.client(
+            "s3", region_name=region or None, endpoint_url=endpoint_url or None
+        )
+
+    @staticmethod
+    def validate_key(key: str) -> str:
+        if not re.fullmatch(
+            r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\.(?:log|txt|json|md|pdf)", key
+        ):
+            raise ValueError("Invalid storage key.")
+        return key
+
+    def put(self, chunks: Iterable[bytes], suffix: str) -> StoredObject:
+        key = self.validate_key(f"{uuid4()}{suffix}")
+        digest, size = hashlib.sha256(), 0
+        with tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024) as source:
+            for chunk in chunks:
+                source.write(chunk)
+                digest.update(chunk)
+                size += len(chunk)
+            source.seek(0)
+            self.client.upload_fileobj(source, self.bucket, key)
+        return StoredObject(key, size, digest.hexdigest())
+
+    def open(self, key: str) -> BinaryIO:
+        return self.client.get_object(Bucket=self.bucket, Key=self.validate_key(key))["Body"]
+
+    def delete(self, key: str) -> None:
+        self.client.delete_object(Bucket=self.bucket, Key=self.validate_key(key))
+
+    def check_ready(self) -> None:
+        key = self.validate_key(f"{uuid4()}.txt")
+        try:
+            self.client.put_object(Bucket=self.bucket, Key=key, Body=b"ready")
+            body = self.client.get_object(Bucket=self.bucket, Key=key)["Body"]
+            try:
+                if body.read() != b"ready":
+                    raise OSError("S3 readiness probe failed.")
+            finally:
+                body.close()
+        finally:
+            self.client.delete_object(Bucket=self.bucket, Key=key)
+
+
+def get_storage(settings: Settings) -> Storage:
+    if settings.storage_backend == "s3":
+        settings.validate_storage_configuration()
+        return S3Storage(settings.s3_bucket, settings.s3_region, settings.s3_endpoint_url)
     directory = settings.upload_directory
     if not directory.is_absolute():
         directory = PROJECT_ROOT / directory

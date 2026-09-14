@@ -52,6 +52,7 @@ def create_app(
                 ) from None
             application.state.session_factory = create_session_factory(engine)
             settings.validate_auth_configuration()
+            settings.validate_storage_configuration()
             queue = TaskQueue(settings)
             application.state.task_queue = queue
             yield
